@@ -1,0 +1,12 @@
+{
+  "name": "Trolley Vega Alta",
+  "short_name": "Trolley VA",
+  "description": "Rastreo en vivo de los trolleys de Vega Alta, Puerto Rico",
+  "theme_color": "#146C6E",
+  "background_color": "#FAF7F0",
+  "display": "standalone",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
