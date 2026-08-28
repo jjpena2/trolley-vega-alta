@@ -511,11 +511,21 @@ a {
   padding: 8px 4px;
   border-radius: var(--radius-sm);
   font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.stop-row:active {
+  background: var(--cream-200);
 }
 
 .stop-row.next {
   background: var(--cream-200);
   font-weight: 700;
+}
+
+.stop-row.selected {
+  outline: 2px solid var(--ink-900);
+  outline-offset: -2px;
 }
 
 .stop-dot {
