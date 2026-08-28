@@ -1,14 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import {
-  MapContainer,
-  TileLayer,
-  Marker,
-  Popup,
-  Polyline,
-  CircleMarker,
-  useMap,
-} from 'react-leaflet'
-import L from 'leaflet'
+import maplibregl from 'maplibre-gl'
+import 'maplibre-gl/dist/maplibre-gl.css'
 import { onValue, ref } from 'firebase/database'
 import { db } from '../firebase'
 import {
@@ -20,16 +12,13 @@ import {
 } from '../data/routesVegaBaja'
 
 // Centro aproximado del mapa (ajusta esto cuando tengas las coordenadas
-// reales de Vega Alta / tu municipio)
-const CENTRO_MAPA = [18.413, -66.3944]
+// reales de Vega Alta / tu municipio). MapLibre usa [lng, lat].
+const CENTRO_MAPA = [-66.3944, 18.413]
 
-const trolleyIcon = L.divIcon({
-  className: '',
-  html: `<div class="trolley-marker"><span>🚋</span></div>`,
-  iconSize: [34, 34],
-  iconAnchor: [17, 30],
-  popupAnchor: [0, -28],
-})
+// Estilo de mapa vectorial gratuito, sin llave y sin límite de uso
+// (OpenFreeMap). Da el look "Google Maps / Waze" sin depender de un
+// proveedor de pago.
+const ESTILO_MAPA = 'https://tiles.openfreemap.org/styles/liberty'
 
 // Hook: carga la geometría de una ruta. Muestra de inmediato la versión
 // aproximada (línea recta entre puntos conocidos) y, en cuanto el
@@ -61,37 +50,22 @@ function useGeometriaRuta(ruta) {
   return geometria
 }
 
-// Vive DENTRO de <MapContainer> para poder controlar el mapa:
-// - Cuando cambia la geometría de la ruta mostrada, encuadra el mapa a
-//   toda la ruta (zoom automático).
-// - Cuando el pasajero toca una parada en la lista, centra el mapa ahí
-//   y abre su popup.
-function ControladorDeMapa({ geometria, paradaSeleccionada, paradas, marcadoresRef }) {
-  const map = useMap()
-
-  useEffect(() => {
-    if (!geometria?.geometry?.length) return
-    const bounds = L.latLngBounds(geometria.geometry)
-    map.fitBounds(bounds, { padding: [32, 32] })
-  }, [geometria, map])
-
-  useEffect(() => {
-    if (!paradaSeleccionada || !paradas) return
-    const p = paradas.find((x) => x.codigo === paradaSeleccionada)
-    if (!p) return
-    map.flyTo([p.lat, p.lng], Math.max(map.getZoom(), 16), { duration: 0.6 })
-    const marker = marcadoresRef.current.get(p.codigo)
-    if (marker) marker.openPopup()
-  }, [paradaSeleccionada, paradas, map, marcadoresRef])
-
-  return null
+function elEl(html) {
+  const div = document.createElement('div')
+  div.innerHTML = html
+  return div.firstElementChild
 }
 
 export default function PassengerMap() {
   const [choferes, setChoferes] = useState({})
   const [rutaSeleccionada, setRutaSeleccionada] = useState(null)
   const [paradaSeleccionada, setParadaSeleccionada] = useState(null)
-  const marcadoresRef = useRef(new Map())
+
+  const mapDivRef = useRef(null)
+  const mapRef = useRef(null)
+  const mapListoRef = useRef(false)
+  const marcadoresParadaRef = useRef(new Map())
+  const marcadoresTrolleyRef = useRef(new Map())
 
   useEffect(() => {
     const choferesRef = ref(db, 'choferesActivos')
@@ -141,6 +115,157 @@ export default function PassengerMap() {
     setParadaSeleccionada((actual) => (actual === codigo ? null : codigo))
   }
 
+  const [, setMapaListo] = useState(false)
+
+  // ---- Crea el mapa una sola vez ----
+  useEffect(() => {
+    const map = new maplibregl.Map({
+      container: mapDivRef.current,
+      style: ESTILO_MAPA,
+      center: CENTRO_MAPA,
+      zoom: 12,
+      attributionControl: true,
+    })
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-left')
+    map.on('load', () => {
+      map.addSource('ruta-trazado', {
+        type: 'geojson',
+        data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] } },
+      })
+      map.addLayer({
+        id: 'ruta-trazado-linea',
+        type: 'line',
+        source: 'ruta-trazado',
+        paint: {
+          'line-color': '#146c6e',
+          'line-width': 4,
+          'line-opacity': 0.8,
+        },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      })
+      mapListoRef.current = true
+      mapRef.current = map
+      // fuerza un re-render leve para que los efectos que dependen de
+      // mapListoRef puedan correr
+      setMapaListo(true)
+    })
+    return () => {
+      map.remove()
+      mapRef.current = null
+      mapListoRef.current = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ---- Dibuja/actualiza la línea de la ruta y encuadra el mapa ----
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapListoRef.current) return
+    const fuente = map.getSource('ruta-trazado')
+    if (!geometria) {
+      fuente?.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [] } })
+      return
+    }
+    const coords = geometria.geometry.map(([lat, lng]) => [lng, lat])
+    fuente?.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords } })
+    map.setPaintProperty('ruta-trazado-linea', 'line-color', rutaMostrada.color)
+
+    const bounds = coords.reduce(
+      (b, c) => b.extend(c),
+      new maplibregl.LngLatBounds(coords[0], coords[0])
+    )
+    map.fitBounds(bounds, { padding: 48, duration: 600 })
+  }, [geometria, rutaMostrada])
+
+  // ---- Marcadores de paradas ----
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapListoRef.current) return
+
+    // limpia marcadores anteriores
+    marcadoresParadaRef.current.forEach((m) => m.marker.remove())
+    marcadoresParadaRef.current.clear()
+
+    if (!llegadas) return
+
+    llegadas.paradas.forEach((p) => {
+      const esSeleccionada = p.codigo === paradaSeleccionada
+      const esProxima = p.codigo === llegadas.proximaCodigo
+      const tamano = esSeleccionada ? 20 : esProxima ? 16 : 10
+      const el = elEl(`
+        <div style="
+          width:${tamano}px;height:${tamano}px;border-radius:50%;
+          background:${esProxima || esSeleccionada ? rutaMostrada.color : '#fff'};
+          border:${esSeleccionada ? 3 : 2}px solid ${esSeleccionada ? '#17262a' : rutaMostrada.color};
+          box-shadow:0 2px 6px rgba(0,0,0,0.25);cursor:pointer;
+        "></div>
+      `)
+      el.addEventListener('click', () => elegirParada(p.codigo))
+
+      const popup = new maplibregl.Popup({ offset: 12, closeButton: true }).setHTML(`
+        <div class="popup-card">
+          <b>${p.nombre}</b><br/>
+          ${p.vuelta ? `~${p.minutos} min (próxima vuelta)` : `~${p.minutos} min`}
+        </div>
+      `)
+
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([p.lng, p.lat])
+        .setPopup(popup)
+        .addTo(map)
+
+      marcadoresParadaRef.current.set(p.codigo, { marker, popup, lng: p.lng, lat: p.lat })
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [llegadas, paradaSeleccionada, rutaMostrada])
+
+  // ---- Centra el mapa y abre el popup al elegir una parada ----
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapListoRef.current || !paradaSeleccionada) return
+    const entry = marcadoresParadaRef.current.get(paradaSeleccionada)
+    if (!entry) return
+    map.flyTo({
+      center: [entry.lng, entry.lat],
+      zoom: Math.max(map.getZoom(), 16),
+      duration: 600,
+    })
+    entry.marker.togglePopup()
+  }, [paradaSeleccionada])
+
+  // ---- Marcadores de trolleys en vivo ----
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapListoRef.current) return
+
+    const vistos = new Set()
+    activos.forEach((c) => {
+      vistos.add(c.uid)
+      const ruta = obtenerRuta(c.ruta)
+      const existente = marcadoresTrolleyRef.current.get(c.uid)
+      if (existente) {
+        existente.marker.setLngLat([c.lng, c.lat])
+        existente.popup.setHTML(popupTrolleyHtml(ruta, c))
+      } else {
+        const el = elEl(`<div class="trolley-marker"><span>🚋</span></div>`)
+        const popup = new maplibregl.Popup({ offset: 20 }).setHTML(popupTrolleyHtml(ruta, c))
+        const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
+          .setLngLat([c.lng, c.lat])
+          .setPopup(popup)
+          .addTo(map)
+        marcadoresTrolleyRef.current.set(c.uid, { marker, popup })
+      }
+    })
+
+    // quita los que ya no están activos
+    marcadoresTrolleyRef.current.forEach((entry, uid) => {
+      if (!vistos.has(uid)) {
+        entry.marker.remove()
+        marcadoresTrolleyRef.current.delete(uid)
+      }
+    })
+  }, [activos])
+
   return (
     <div className="screen no-pad">
       {rutasActivas.length > 1 && (
@@ -159,77 +284,7 @@ export default function PassengerMap() {
       )}
 
       <div className="map-wrap">
-        <MapContainer
-          center={CENTRO_MAPA}
-          zoom={13}
-          scrollWheelZoom
-          style={{ height: '100%', width: '100%' }}
-        >
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-
-          <ControladorDeMapa
-            geometria={geometria}
-            paradaSeleccionada={paradaSeleccionada}
-            paradas={llegadas?.paradas}
-            marcadoresRef={marcadoresRef}
-          />
-
-          {geometria && (
-            <Polyline
-              positions={geometria.geometry}
-              pathOptions={{ color: rutaMostrada.color, weight: 4, opacity: 0.75 }}
-            />
-          )}
-
-          {llegadas &&
-            llegadas.paradas.map((p) => {
-              const esSeleccionada = p.codigo === paradaSeleccionada
-              const esProxima = p.codigo === llegadas.proximaCodigo
-              return (
-                <CircleMarker
-                  key={p.codigo}
-                  ref={(el) => {
-                    if (el) marcadoresRef.current.set(p.codigo, el)
-                    else marcadoresRef.current.delete(p.codigo)
-                  }}
-                  center={[p.lat, p.lng]}
-                  radius={esSeleccionada ? 10 : esProxima ? 7 : 4}
-                  pathOptions={{
-                    color: esSeleccionada ? '#17262a' : rutaMostrada.color,
-                    fillColor: esProxima || esSeleccionada ? rutaMostrada.color : '#fff',
-                    fillOpacity: 1,
-                    weight: esSeleccionada ? 3 : 2,
-                  }}
-                  eventHandlers={{ click: () => elegirParada(p.codigo) }}
-                >
-                  <Popup>
-                    <div className="popup-card">
-                      <b>{p.nombre}</b>
-                      <br />
-                      {p.vuelta
-                        ? `~${p.minutos} min (próxima vuelta)`
-                        : `~${p.minutos} min`}
-                    </div>
-                  </Popup>
-                </CircleMarker>
-              )
-            })}
-
-          {activos.map((c) => (
-            <Marker key={c.uid} position={[c.lat, c.lng]} icon={trolleyIcon}>
-              <Popup>
-                <div className="popup-card">
-                  <b>{obtenerRuta(c.ruta)?.nombre || 'Trolley'}</b>
-                  <br />
-                  Chofer: {c.nombre}
-                </div>
-              </Popup>
-            </Marker>
-          ))}
-        </MapContainer>
+        <div ref={mapDivRef} style={{ height: '100%', width: '100%' }} />
 
         {!rutaMostrada && (
           <div className="map-legend">
@@ -282,4 +337,13 @@ export default function PassengerMap() {
       )}
     </div>
   )
+}
+
+function popupTrolleyHtml(ruta, c) {
+  return `
+    <div class="popup-card">
+      <b>${ruta?.nombre || 'Trolley'}</b><br/>
+      Chofer: ${c.nombre}
+    </div>
+  `
 }
