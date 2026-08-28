@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-
-const RUTAS = ['Ruta 1 - Centro', 'Ruta 2 - Breñas', 'Ruta 3 - Pugnado', 'Otra']
+import { ROUTES } from '../data/routesVegaBaja'
 
 export default function Register() {
   const { register } = useAuth()
@@ -13,7 +12,7 @@ export default function Register() {
   const [correo, setCorreo] = useState('')
   const [contrasena, setContrasena] = useState('')
   const [telefono, setTelefono] = useState('')
-  const [ruta, setRuta] = useState(RUTAS[0])
+  const [rutaId, setRutaId] = useState(ROUTES[0].id)
   const [error, setError] = useState('')
   const [cargando, setCargando] = useState(false)
 
@@ -34,7 +33,7 @@ export default function Register() {
         contrasena,
         rol,
         telefono: telefono.trim(),
-        ruta: rol === 'chofer' ? ruta : '',
+        ruta: rol === 'chofer' ? rutaId : '',
       })
       navigate('/')
     } catch (err) {
@@ -132,12 +131,12 @@ export default function Register() {
                 <label htmlFor="ruta">Ruta asignada</label>
                 <select
                   id="ruta"
-                  value={ruta}
-                  onChange={(e) => setRuta(e.target.value)}
+                  value={rutaId}
+                  onChange={(e) => setRutaId(e.target.value)}
                 >
-                  {RUTAS.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
+                  {ROUTES.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.nombre}
                     </option>
                   ))}
                 </select>

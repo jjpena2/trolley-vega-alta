@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import { ref, onDisconnect, set, update } from 'firebase/database'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ref, onDisconnect, update } from 'firebase/database'
 import { db } from '../firebase'
 import { useAuth } from '../context/AuthContext'
+import { obtenerRuta, calcularLlegadasPorDistancia } from '../data/routesVegaBaja'
 
 export default function DriverDashboard() {
   const { user, profile } = useAuth()
@@ -12,6 +13,12 @@ export default function DriverDashboard() {
   const watchIdRef = useRef(null)
 
   const choferRef = ref(db, `choferesActivos/${user.uid}`)
+  const ruta = obtenerRuta(profile?.ruta)
+
+  const llegadas = useMemo(() => {
+    if (!ruta || !ultimaPosicion) return null
+    return calcularLlegadasPorDistancia(ruta, ultimaPosicion)
+  }, [ruta, ultimaPosicion])
 
   // Si el chofer cierra la app sin apagar el servicio, Firebase lo marca
   // como inactivo automáticamente al perder la conexión.
@@ -81,7 +88,7 @@ export default function DriverDashboard() {
           Hola, {profile?.nombre?.split(' ')[0] || 'chofer'}
         </h2>
         <p className="hint" style={{ marginBottom: 20 }}>
-          Ruta: <b>{profile?.ruta || 'Sin asignar'}</b>
+          Ruta: <b>{ruta?.nombre || 'Sin asignar'}</b>
         </p>
 
         {error && <div className="error-banner">{error}</div>}
@@ -115,6 +122,34 @@ export default function DriverDashboard() {
           para que los pasajeros vean tu ubicación en tiempo real.
         </p>
       </div>
+
+      {llegadas && (
+        <div className="card" style={{ paddingBottom: 8 }}>
+          <p
+            className="hint"
+            style={{ marginTop: 0, textTransform: 'uppercase', fontWeight: 700 }}
+          >
+            Tus próximas paradas
+          </p>
+          <div className="stops-list">
+            {llegadas.paradas.map((p) => (
+              <div
+                key={p.codigo}
+                className={
+                  'stop-row' + (p.codigo === llegadas.proximaCodigo ? ' next' : '')
+                }
+              >
+                <span className="stop-dot" style={{ background: ruta.color }} />
+                <span className="stop-name">{p.nombre}</span>
+                <span className="stop-eta">
+                  {p.minutos <= 0 ? 'Aquí' : `${p.minutos} min`}
+                  {p.vuelta ? ' *' : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
