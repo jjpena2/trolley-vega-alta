@@ -220,6 +220,125 @@ function conexionesDe(parada, rutaActualId) {
     .filter(Boolean)
 }
 
+// ---------- Planificador de viajes ----------
+// "Lugar" = un punto real del pueblo, sin importar cuántas rutas pasen
+// por él. Si es una parada ancla compartida (p.ej. "Esc. Bellas Artes"),
+// se agrupan todas sus apariciones en distintas rutas bajo un solo
+// lugar; si es una parada exclusiva de una ruta, es su propio lugar.
+export const LUGARES = (() => {
+  const porAncla = new Map()
+  const lugares = []
+
+  ROUTES.forEach((r) => {
+    r.paradas.forEach((p) => {
+      if (p.ancla) {
+        let lugar = porAncla.get(p.ancla)
+        if (!lugar) {
+          lugar = { nombre: p.nombre, ancla: p.ancla, instancias: [] }
+          porAncla.set(p.ancla, lugar)
+          lugares.push(lugar)
+        }
+        lugar.instancias.push({ routeId: r.id, offset: p.offset, codigo: p.codigo })
+      } else {
+        lugares.push({
+          nombre: p.nombre,
+          ancla: null,
+          instancias: [{ routeId: r.id, offset: p.offset, codigo: p.codigo }],
+        })
+      }
+    })
+  })
+
+  return lugares
+})()
+
+export function buscarLugares(texto) {
+  const q = texto.trim().toLowerCase()
+  if (!q) return []
+  return LUGARES.filter((l) => l.nombre.toLowerCase().includes(q)).slice(0, 8)
+}
+
+function lugarPorNombreExacto(texto) {
+  const q = texto.trim().toLowerCase()
+  return LUGARES.find((l) => l.nombre.toLowerCase() === q) || null
+}
+
+// El "offset" de cada parada representa los minutos reales publicados
+// en el itinerario de MOVICI (Vega Baja) desde la salida de la
+// terminal. Lo usamos aquí para estimar cuánto dura cada tramo del
+// viaje, sin necesitar la geometría ni el chofer en vivo.
+function minutosEntre(routeId, offsetInicio, offsetFin) {
+  const ruta = obtenerRuta(routeId)
+  const total = ruta.paradas[ruta.paradas.length - 1].offset || 1
+  if (offsetFin >= offsetInicio) return offsetFin - offsetInicio
+  return total - offsetInicio + offsetFin // da la vuelta completa
+}
+
+// Intenta armar un plan de viaje entre dos lugares (por nombre exacto,
+// tal como aparecen en LUGARES). Devuelve:
+//  { tipo: 'directo', ruta, origen, destino, minutos }
+//  { tipo: 'transbordo', ruta1, ruta2, lugarTransbordo, origen, destino, minutos }
+//  { tipo: 'mismo-lugar' }  si origen y destino son el mismo lugar
+//  null  si no encontramos ninguna combinación (ni directa ni con 1 transbordo)
+export function planificarViaje(nombreOrigen, nombreDestino) {
+  const origen = lugarPorNombreExacto(nombreOrigen)
+  const destino = lugarPorNombreExacto(nombreDestino)
+  if (!origen || !destino) return { error: 'no-encontrado' }
+  if (origen === destino) return { tipo: 'mismo-lugar' }
+
+  // 1) Viaje directo: ¿alguna ruta pasa por ambos lugares?
+  let mejorDirecto = null
+  origen.instancias.forEach((oi) => {
+    destino.instancias.forEach((di) => {
+      if (oi.routeId !== di.routeId) return
+      const minutos = minutosEntre(oi.routeId, oi.offset, di.offset)
+      if (!mejorDirecto || minutos < mejorDirecto.minutos) {
+        mejorDirecto = {
+          tipo: 'directo',
+          ruta: obtenerRuta(oi.routeId),
+          origen: { nombre: origen.nombre, codigo: oi.codigo },
+          destino: { nombre: destino.nombre, codigo: di.codigo },
+          minutos,
+        }
+      }
+    })
+  })
+  if (mejorDirecto) return mejorDirecto
+
+  // 2) Con un transbordo: ¿hay un lugar donde se crucen una ruta que
+  // pasa por el origen y otra que pasa por el destino?
+  let mejorTransbordo = null
+  origen.instancias.forEach((oi) => {
+    destino.instancias.forEach((di) => {
+      if (oi.routeId === di.routeId) return
+      LUGARES.forEach((lugarT) => {
+        const instA = lugarT.instancias.find((x) => x.routeId === oi.routeId)
+        const instB = lugarT.instancias.find((x) => x.routeId === di.routeId)
+        if (!instA || !instB) return
+        const min1 = minutosEntre(oi.routeId, oi.offset, instA.offset)
+        const min2 = minutosEntre(di.routeId, instB.offset, di.offset)
+        const minutos = min1 + min2
+        if (!mejorTransbordo || minutos < mejorTransbordo.minutos) {
+          mejorTransbordo = {
+            tipo: 'transbordo',
+            ruta1: obtenerRuta(oi.routeId),
+            ruta2: obtenerRuta(di.routeId),
+            origen: { nombre: origen.nombre, codigo: oi.codigo },
+            transbordo: { nombre: lugarT.nombre, codigo1: instA.codigo, codigo2: instB.codigo },
+            destino: { nombre: destino.nombre, codigo: di.codigo },
+            minutos1: min1,
+            minutos2: min2,
+            minutos,
+          }
+        }
+      })
+    })
+  })
+  if (mejorTransbordo) return mejorTransbordo
+
+  return null
+}
+
 
 // ---------- Geometría: primero una versión rápida en línea recta,  ----------
 // ---------- y luego la versión real siguiendo carreteras (OSRM)    ----------
@@ -471,4 +590,15 @@ export function calcularLlegadasPorDistancia(
 // Lista simple [lat,lng] para dibujar la línea de la ruta en el mapa.
 export function obtenerTrazado(geometria) {
   return geometria.geometry
+}
+
+// Coordenadas [lat,lng] de una parada específica (por ruta y código),
+// usando la versión aproximada (rápida, sin esperar el servicio de
+// rutas) — suficiente para ubicar un pin en el mapa.
+export function obtenerCoordenadaParada(routeId, codigo) {
+  const ruta = obtenerRuta(routeId)
+  if (!ruta) return null
+  const geo = construirGeometriaAproximada(ruta)
+  const p = geo.paradas.find((x) => x.codigo === codigo)
+  return p ? [p.lat, p.lng] : null
 }
