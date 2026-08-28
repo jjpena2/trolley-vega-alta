@@ -456,3 +456,85 @@ a {
     animation: none;
   }
 }
+
+/* ===== Route tabs + stops panel ===== */
+.route-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 14px 20px 10px;
+  overflow-x: auto;
+}
+
+.route-tabs button {
+  flex-shrink: 0;
+  border: 1.5px solid var(--line);
+  background: #fff;
+  color: var(--ink-500);
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.route-tabs button.active {
+  border-color: var(--tab-color, var(--teal-700));
+  background: var(--tab-color, var(--teal-700));
+  color: #fff;
+}
+
+.stops-panel {
+  background: #fff;
+  border-top: 1px solid var(--line);
+  padding: 16px 20px calc(16px + env(safe-area-inset-bottom));
+}
+
+.stops-panel-header {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1rem;
+  margin-bottom: 10px;
+}
+
+.stops-list {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stop-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 4px;
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+}
+
+.stop-row.next {
+  background: var(--cream-200);
+  font-weight: 700;
+}
+
+.stop-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.stop-name {
+  flex: 1;
+  color: var(--ink-900);
+}
+
+.stop-eta {
+  color: var(--ink-500);
+  font-variant-numeric: tabular-nums;
+}
+
+.stop-row.next .stop-eta {
+  color: var(--ink-900);
+}
