@@ -196,7 +196,9 @@ export function obtenerRuta(id) {
   return ROUTES.find((r) => r.id === id) || null
 }
 
-// ---------- Geometría: interpolar coordenadas + distancias ----------
+
+// ---------- Geometría: primero una versión rápida en línea recta,  ----------
+// ---------- y luego la versión real siguiendo carreteras (OSRM)    ----------
 
 function haversineKm([lat1, lon1], [lat2, lon2]) {
   const R = 6371
@@ -210,11 +212,10 @@ function haversineKm([lat1, lon1], [lat2, lon2]) {
   return 2 * R * Math.asin(Math.sqrt(a))
 }
 
-// Devuelve las paradas de una ruta con coordenadas [lat,lng] completas
-// (las que no tenían ancla se ubican por interpolación lineal entre la
-// ancla anterior y la siguiente), más la distancia acumulada en km
-// desde la primera parada hasta cada una (siguiendo el orden de la ruta).
-export function construirGeometria(ruta) {
+// Versión rápida (sin internet): interpola en línea recta entre anclas.
+// Se usa como respaldo instantáneo mientras se carga la versión real, o
+// si no hay conexión para consultar el servicio de rutas.
+export function construirGeometriaAproximada(ruta) {
   const paradas = ruta.paradas
   const anclaIdx = paradas
     .map((p, i) => (p.ancla ? i : -1))
@@ -224,7 +225,7 @@ export function construirGeometria(ruta) {
     if (p.ancla) return p.ancla
     const prevIdx = [...anclaIdx].reverse().find((a) => a < i)
     const nextIdx = anclaIdx.find((a) => a > i)
-    if (prevIdx === undefined && nextIdx === undefined) return TERMINAL
+    if (prevIdx === undefined && nextIdx === undefined) return paradas[0].ancla
     if (prevIdx === undefined) return paradas[nextIdx].ancla
     if (nextIdx === undefined) return paradas[prevIdx].ancla
     const prevP = paradas[prevIdx]
@@ -243,31 +244,144 @@ export function construirGeometria(ruta) {
     return { ...p, lat: coords[i][0], lng: coords[i][1], distanciaKm: acumulada }
   })
 
-  return { ...ruta, paradas: paradasConGeo, distanciaTotalKm: acumulada }
+  return {
+    ...ruta,
+    paradas: paradasConGeo,
+    distanciaTotalKm: acumulada,
+    geometry: coords, // para dibujar la línea (aproximada, no sigue calles)
+    esAproximada: true,
+  }
 }
 
-// Dada la geometría de una ruta y la posición actual del chofer,
-// calcula cuánto ha avanzado (en km) sobre la línea de la ruta,
-// proyectando su posición sobre el segmento más cercano.
-function proyectarSobreRuta(paradasGeo, posicion) {
+// Construye la cadena de distancias acumuladas a lo largo de una lista
+// de puntos [lat,lng] (por ejemplo, la geometría real que devuelve OSRM).
+function acumularDistancias(puntos) {
+  const acumulada = [0]
+  for (let i = 1; i < puntos.length; i++) {
+    acumulada.push(acumulada[i - 1] + haversineKm(puntos[i - 1], puntos[i]))
+  }
+  return acumulada
+}
+
+// Busca el punto exacto (interpolado) sobre una polilínea que corresponde
+// a una distancia acumulada objetivo.
+function puntoADistancia(puntos, acumulada, distanciaObjetivo) {
+  if (distanciaObjetivo <= 0) return puntos[0]
+  const total = acumulada[acumulada.length - 1]
+  if (distanciaObjetivo >= total) return puntos[puntos.length - 1]
+  let i = 1
+  while (acumulada[i] < distanciaObjetivo) i++
+  const a = puntos[i - 1]
+  const b = puntos[i]
+  const segLen = acumulada[i] - acumulada[i - 1] || 0.0001
+  const t = (distanciaObjetivo - acumulada[i - 1]) / segLen
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+}
+
+// Caché en memoria: cada ruta solo se consulta una vez por sesión.
+const cacheGeometriaReal = new Map()
+
+// Consulta OSRM (servicio de ruteo gratuito y público) para obtener la
+// línea REAL siguiendo carreteras entre las paradas "ancla" de una ruta,
+// y ubica las paradas intermedias sobre esa línea real (no en línea
+// recta). Devuelve la misma forma que construirGeometriaAproximada.
+export async function construirGeometriaReal(ruta) {
+  if (cacheGeometriaReal.has(ruta.id)) return cacheGeometriaReal.get(ruta.id)
+
+  const paradas = ruta.paradas
+  const anclas = paradas.filter((p) => p.ancla)
+  if (anclas.length < 2) {
+    const aprox = construirGeometriaAproximada(ruta)
+    cacheGeometriaReal.set(ruta.id, aprox)
+    return aprox
+  }
+
+  const coordsUrl = anclas.map((p) => `${p.ancla[1]},${p.ancla[0]}`).join(';')
+  const url = `https://router.project-osrm.org/route/v1/driving/${coordsUrl}?overview=full&geometries=geojson`
+
+  const resp = await fetch(url)
+  if (!resp.ok) throw new Error('OSRM respondió con error')
+  const data = await resp.json()
+  const ruta0 = data.routes?.[0]
+  if (!ruta0) throw new Error('OSRM no devolvió una ruta')
+
+  // Geometría completa real (siguiendo carreteras), en [lat,lng]
+  const geometry = ruta0.geometry.coordinates.map(([lon, lat]) => [lat, lon])
+  const geomAcumulada = acumularDistancias(geometry)
+
+  // Distancia real acumulada de cada ancla = suma de los tramos (legs)
+  // hasta llegar a ella.
+  const anclaDistanciaKm = [0]
+  for (const leg of ruta0.legs) {
+    anclaDistanciaKm.push(anclaDistanciaKm[anclaDistanciaKm.length - 1] + leg.distance / 1000)
+  }
+
+  // Mapea cada parada (ancla o no) a su distancia real acumulada y,
+  // a partir de ahí, a su coordenada real sobre la carretera.
+  const anclaIdx = paradas.map((p, i) => (p.ancla ? i : -1)).filter((i) => i !== -1)
+  let contadorAncla = 0
+  const anclaOffsetADistancia = new Map()
+  anclaIdx.forEach((idx) => {
+    anclaOffsetADistancia.set(paradas[idx].offset, anclaDistanciaKm[contadorAncla])
+    contadorAncla++
+  })
+
+  const paradasConGeo = paradas.map((p, i) => {
+    let distReal
+    if (p.ancla) {
+      distReal = anclaOffsetADistancia.get(p.offset)
+    } else {
+      const prevIdx = [...anclaIdx].reverse().find((a) => a < i)
+      const nextIdx = anclaIdx.find((a) => a > i)
+      const prevOffset = prevIdx === undefined ? 0 : paradas[prevIdx].offset
+      const nextOffset = nextIdx === undefined ? p.offset + 1 : paradas[nextIdx].offset
+      const prevDist = prevIdx === undefined ? 0 : anclaOffsetADistancia.get(prevOffset)
+      const nextDist =
+        nextIdx === undefined
+          ? geomAcumulada[geomAcumulada.length - 1]
+          : anclaOffsetADistancia.get(nextOffset)
+      const t = (p.offset - prevOffset) / (nextOffset - prevOffset || 1)
+      distReal = prevDist + (nextDist - prevDist) * t
+    }
+    const [lat, lng] = puntoADistancia(geometry, geomAcumulada, distReal)
+    return { ...p, lat, lng, distanciaKm: distReal }
+  })
+
+  const resultado = {
+    ...ruta,
+    paradas: paradasConGeo,
+    distanciaTotalKm: geomAcumulada[geomAcumulada.length - 1],
+    geometry, // línea real siguiendo carreteras, para dibujar en el mapa
+    geometryAcumulada: geomAcumulada,
+    esAproximada: false,
+  }
+  cacheGeometriaReal.set(ruta.id, resultado)
+  return resultado
+}
+
+// Proyecta la posición del chofer sobre la geometría (real o aproximada)
+// de la ruta: devuelve cuánto ha avanzado sobre la línea (progresoKm) y
+// qué tan lejos está, en línea recta, de la ruta más cercana
+// (distanciaAlChofer). Esto último es clave: si el chofer está muy
+// lejos de toda la ruta, los tiempos deben reflejar esa distancia real,
+// no solo su posición relativa "dentro" de la línea.
+function proyectarSobreGeometria(geometria, posicion) {
+  const puntos = geometria.geometry
+  const acumulada =
+    geometria.geometryAcumulada || acumularDistancias(puntos)
+
   let mejorDist = Infinity
   let mejorAcumulada = 0
 
-  for (let i = 0; i < paradasGeo.length - 1; i++) {
-    const a = paradasGeo[i]
-    const b = paradasGeo[i + 1]
-    const segLenKm = b.distanciaKm - a.distanciaKm || 0.0001
+  for (let i = 0; i < puntos.length - 1; i++) {
+    const [ay, ax] = puntos[i]
+    const [by, bx] = puntos[i + 1]
+    const segLenKm = acumulada[i + 1] - acumulada[i] || 0.0001
 
-    const ax = a.lng,
-      ay = a.lat,
-      bx = b.lng,
-      by = b.lat
-    const px = posicion.lng,
-      py = posicion.lat
-    const abx = bx - ax,
-      aby = by - ay
-    const apx = px - ax,
-      apy = py - ay
+    const abx = bx - ax
+    const aby = by - ay
+    const apx = posicion.lng - ax
+    const apy = posicion.lat - ay
     const lenSq = abx * abx + aby * aby || 0.0000001
     let t = (apx * abx + apy * aby) / lenSq
     t = Math.max(0, Math.min(1, t))
@@ -277,31 +391,36 @@ function proyectarSobreRuta(paradasGeo, posicion) {
 
     if (dist < mejorDist) {
       mejorDist = dist
-      mejorAcumulada = a.distanciaKm + segLenKm * t
+      mejorAcumulada = acumulada[i] + segLenKm * t
     }
   }
   return { distanciaAlChofer: mejorDist, progresoKm: mejorAcumulada }
 }
 
-// Calcula, para cada parada de la ruta, la distancia restante y el
-// tiempo estimado de llegada según la posición GPS actual del chofer.
+// Calcula, para cada parada, la distancia restante y el tiempo estimado
+// de llegada según la posición GPS actual del chofer. Si el chofer está
+// lejos de toda la ruta (por ejemplo, todavía no ha llegado a su punto
+// de partida), esa distancia extra se suma a todas las paradas.
 // velocidadKmh: velocidad promedio asumida (incluye paradas y tráfico
 // urbano ligero).
 export function calcularLlegadasPorDistancia(
-  ruta,
+  geometria,
   posicionChofer,
   velocidadKmh = 18
 ) {
-  const geo = construirGeometria(ruta)
-  const { progresoKm } = proyectarSobreRuta(geo.paradas, posicionChofer)
+  const { distanciaAlChofer, progresoKm } = proyectarSobreGeometria(
+    geometria,
+    posicionChofer
+  )
 
-  const paradasConEta = geo.paradas.map((p) => {
+  const paradasConEta = geometria.paradas.map((p) => {
     let restanteKm = p.distanciaKm - progresoKm
     let vuelta = false
     if (restanteKm < -0.05) {
-      restanteKm += geo.distanciaTotalKm
+      restanteKm += geometria.distanciaTotalKm
       vuelta = true
     }
+    restanteKm += distanciaAlChofer
     const minutos = Math.max(0, Math.round((restanteKm / velocidadKmh) * 60))
     return { ...p, restanteKm, minutos, vuelta }
   })
@@ -311,15 +430,15 @@ export function calcularLlegadasPorDistancia(
     .sort((a, b) => a.restanteKm - b.restanteKm)[0]
 
   return {
-    color: ruta.color,
-    distanciaTotalKm: geo.distanciaTotalKm,
+    color: geometria.color,
+    distanciaTotalKm: geometria.distanciaTotalKm,
+    distanciaAlChofer,
     paradas: paradasConEta,
     proximaCodigo: proxima?.codigo,
   }
 }
 
 // Lista simple [lat,lng] para dibujar la línea de la ruta en el mapa.
-export function obtenerTrazado(ruta) {
-  const geo = construirGeometria(ruta)
-  return geo.paradas.map((p) => [p.lat, p.lng])
+export function obtenerTrazado(geometria) {
+  return geometria.geometry
 }
