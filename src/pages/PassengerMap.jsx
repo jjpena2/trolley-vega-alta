@@ -12,6 +12,8 @@ import {
   LUGARES,
   planificarViaje,
   obtenerCoordenadaParada,
+  segmentoEntreDistancias,
+  distanciaDeParada,
 } from '../data/routesVegaBaja'
 
 // Centro aproximado del mapa (ajusta esto cuando tengas las coordenadas
@@ -171,6 +173,13 @@ export default function PassengerMap() {
     setPlan(resultado)
   }
 
+  function zoomAParada(routeId, codigo) {
+    const map = mapRef.current
+    const coord = obtenerCoordenadaParada(routeId, codigo)
+    if (!map || !coord) return
+    map.flyTo({ center: [coord[1], coord[0]], zoom: Math.max(map.getZoom(), 16), duration: 600 })
+  }
+
   const [mapaListo, setMapaListo] = useState(false)
 
   // ---- Crea el mapa una sola vez ----
@@ -295,18 +304,44 @@ export default function PassengerMap() {
       return
     }
 
-    const rutasImplicadas = plan?.tipo === 'directo' ? [plan.ruta] : [plan.ruta1, plan.ruta2]
-    const features = rutasImplicadas.map((r) => {
-      const g = geometriasTodas[r.id] || construirGeometriaAproximada(r)
-      return {
-        type: 'Feature',
-        properties: { color: r.color, id: r.id },
-        geometry: {
-          type: 'LineString',
-          coordinates: (g.geometry || []).map(([lat, lng]) => [lng, lat]),
-        },
+    const features = []
+
+    if (plan?.tipo === 'directo') {
+      const g = geometriasTodas[plan.ruta.id] || construirGeometriaAproximada(plan.ruta)
+      const dDesde = distanciaDeParada(g, plan.origen.codigo)
+      const dHasta = distanciaDeParada(g, plan.destino.codigo)
+      if (dDesde != null && dHasta != null) {
+        const segmento = segmentoEntreDistancias(g, dDesde, dHasta)
+        features.push({
+          type: 'Feature',
+          properties: { color: plan.ruta.color, id: plan.ruta.id },
+          geometry: { type: 'LineString', coordinates: segmento.map(([lat, lng]) => [lng, lat]) },
+        })
       }
-    })
+    } else if (plan?.tipo === 'transbordo') {
+      const g1 = geometriasTodas[plan.ruta1.id] || construirGeometriaAproximada(plan.ruta1)
+      const g2 = geometriasTodas[plan.ruta2.id] || construirGeometriaAproximada(plan.ruta2)
+      const d1Desde = distanciaDeParada(g1, plan.origen.codigo)
+      const d1Hasta = distanciaDeParada(g1, plan.transbordo.codigo1)
+      const d2Desde = distanciaDeParada(g2, plan.transbordo.codigo2)
+      const d2Hasta = distanciaDeParada(g2, plan.destino.codigo)
+      if (d1Desde != null && d1Hasta != null) {
+        const segmento1 = segmentoEntreDistancias(g1, d1Desde, d1Hasta)
+        features.push({
+          type: 'Feature',
+          properties: { color: plan.ruta1.color, id: plan.ruta1.id },
+          geometry: { type: 'LineString', coordinates: segmento1.map(([lat, lng]) => [lng, lat]) },
+        })
+      }
+      if (d2Desde != null && d2Hasta != null) {
+        const segmento2 = segmentoEntreDistancias(g2, d2Desde, d2Hasta)
+        features.push({
+          type: 'Feature',
+          properties: { color: plan.ruta2.color, id: plan.ruta2.id },
+          geometry: { type: 'LineString', coordinates: segmento2.map(([lat, lng]) => [lng, lat]) },
+        })
+      }
+    }
     map.getSource('todas-rutas')?.setData({ type: 'FeatureCollection', features })
 
     function ponerPin(coord, html, color) {
@@ -543,8 +578,21 @@ export default function PassengerMap() {
                     1
                   </div>
                   <div>
-                    Toma la <b>{plan.ruta.nombre}</b> en <b>{plan.origen.nombre}</b> y
-                    bájate en <b>{plan.destino.nombre}</b>.
+                    Toma la <b>{plan.ruta.nombre}</b> en{' '}
+                    <button
+                      className="plan-place-link"
+                      onClick={() => zoomAParada(plan.ruta.id, plan.origen.codigo)}
+                    >
+                      {plan.origen.nombre}
+                    </button>{' '}
+                    y bájate en{' '}
+                    <button
+                      className="plan-place-link"
+                      onClick={() => zoomAParada(plan.ruta.id, plan.destino.codigo)}
+                    >
+                      {plan.destino.nombre}
+                    </button>
+                    .
                     <div className="hint" style={{ margin: '4px 0 0' }}>
                       Viaje directo, sin transbordo — ~{plan.minutos} min según el
                       itinerario publicado.
@@ -560,8 +608,21 @@ export default function PassengerMap() {
                       1
                     </div>
                     <div>
-                      Toma la <b>{plan.ruta1.nombre}</b> en <b>{plan.origen.nombre}</b> y
-                      bájate en <b>{plan.transbordo.nombre}</b>.
+                      Toma la <b>{plan.ruta1.nombre}</b> en{' '}
+                      <button
+                        className="plan-place-link"
+                        onClick={() => zoomAParada(plan.ruta1.id, plan.origen.codigo)}
+                      >
+                        {plan.origen.nombre}
+                      </button>{' '}
+                      y bájate en{' '}
+                      <button
+                        className="plan-place-link"
+                        onClick={() => zoomAParada(plan.ruta1.id, plan.transbordo.codigo1)}
+                      >
+                        {plan.transbordo.nombre}
+                      </button>
+                      .
                       <div className="hint" style={{ margin: '4px 0 0' }}>
                         ~{plan.minutos1} min
                       </div>
@@ -572,7 +633,14 @@ export default function PassengerMap() {
                       ⇄
                     </div>
                     <div>
-                      Transborda en <b>{plan.transbordo.nombre}</b>.
+                      Transborda en{' '}
+                      <button
+                        className="plan-place-link"
+                        onClick={() => zoomAParada(plan.ruta1.id, plan.transbordo.codigo1)}
+                      >
+                        {plan.transbordo.nombre}
+                      </button>
+                      .
                     </div>
                   </div>
                   <div className="plan-paso">
@@ -580,7 +648,14 @@ export default function PassengerMap() {
                       2
                     </div>
                     <div>
-                      Toma la <b>{plan.ruta2.nombre}</b> hasta <b>{plan.destino.nombre}</b>.
+                      Toma la <b>{plan.ruta2.nombre}</b> hasta{' '}
+                      <button
+                        className="plan-place-link"
+                        onClick={() => zoomAParada(plan.ruta2.id, plan.destino.codigo)}
+                      >
+                        {plan.destino.nombre}
+                      </button>
+                      .
                       <div className="hint" style={{ margin: '4px 0 0' }}>
                         ~{plan.minutos2} min
                       </div>
