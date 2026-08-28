@@ -191,21 +191,35 @@ export default function PassengerMap() {
     llegadas.paradas.forEach((p) => {
       const esSeleccionada = p.codigo === paradaSeleccionada
       const esProxima = p.codigo === llegadas.proximaCodigo
-      const tamano = esSeleccionada ? 20 : esProxima ? 16 : 10
+      const esConexion = p.conexiones && p.conexiones.length > 0
+      const base = esSeleccionada ? 20 : esProxima ? 16 : esConexion ? 15 : 10
+      const forma = esConexion ? '30%' : '50%'
+      const relleno = esProxima || esSeleccionada ? rutaMostrada.color : '#fff'
+      const colorIcono = esProxima || esSeleccionada ? '#fff' : rutaMostrada.color
       const el = elEl(`
         <div style="
-          width:${tamano}px;height:${tamano}px;border-radius:50%;
-          background:${esProxima || esSeleccionada ? rutaMostrada.color : '#fff'};
+          width:${base}px;height:${base}px;border-radius:${forma};
+          background:${relleno};
           border:${esSeleccionada ? 3 : 2}px solid ${esSeleccionada ? '#17262a' : rutaMostrada.color};
-          box-shadow:0 2px 6px rgba(0,0,0,0.25);cursor:pointer;
-        "></div>
+          box-shadow:0 2px 6px rgba(0,0,0,0.3);cursor:pointer;
+          display:flex;align-items:center;justify-content:center;
+          font-size:${Math.round(base * 0.62)}px;line-height:1;color:${colorIcono};
+          transform:${esConexion ? 'rotate(45deg)' : 'none'};
+        ">${esConexion ? `<span style="transform:rotate(-45deg)">⇄</span>` : ''}</div>
       `)
       el.addEventListener('click', () => elegirParada(p.codigo))
+
+      const conexionesHtml = esConexion
+        ? `<div style="margin-top:6px;font-size:0.78rem;color:#4a5c5f;">
+             🔀 También pasa: ${p.conexiones.map((r) => r.nombre).join(', ')}
+           </div>`
+        : ''
 
       const popup = new maplibregl.Popup({ offset: 12, closeButton: true }).setHTML(`
         <div class="popup-card">
           <b>${p.nombre}</b><br/>
           ${p.vuelta ? `~${p.minutos} min (próxima vuelta)` : `~${p.minutos} min`}
+          ${conexionesHtml}
         </div>
       `)
 
@@ -320,7 +334,17 @@ export default function PassengerMap() {
                 tabIndex={0}
               >
                 <span className="stop-dot" style={{ background: rutaMostrada.color }} />
-                <span className="stop-name">{p.nombre}</span>
+                <span className="stop-name">
+                  {p.nombre}
+                  {p.conexiones?.length > 0 && (
+                    <span
+                      className="transfer-badge"
+                      title={`También pasa: ${p.conexiones.map((r) => r.nombre).join(', ')}`}
+                    >
+                      ⇄ {p.conexiones.length > 1 ? `${p.conexiones.length} rutas` : p.conexiones[0].nombre.replace('Ruta ', 'R')}
+                    </span>
+                  )}
+                </span>
                 <span className="stop-eta">
                   {p.minutos <= 0 ? 'Aquí' : `${p.minutos} min`}
                   {p.vuelta ? ' *' : ''}
@@ -331,7 +355,8 @@ export default function PassengerMap() {
           <p className="hint" style={{ padding: '0 4px' }}>
             Tiempos estimados según la posición GPS actual del chofer y la
             distancia real por carretera a cada parada (no es un horario
-            fijo). * = próxima vuelta. Toca una parada para verla en el mapa.
+            fijo). * = próxima vuelta. ⇄ = punto de transbordo (ahí puedes
+            tomar otro trolley). Toca una parada para verla en el mapa.
           </p>
         </div>
       )}
