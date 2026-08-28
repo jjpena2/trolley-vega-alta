@@ -50,6 +50,33 @@ function useGeometriaRuta(ruta) {
   return geometria
 }
 
+// Hook: carga la geometría de TODAS las rutas a la vez (para el modo
+// "Todas las rutas"). Cada una empieza en su versión aproximada y se
+// va actualizando a la real conforme responde el servicio de rutas.
+// Como construirGeometriaReal cachea por ruta, esto no vuelve a pedir
+// nada si el pasajero ya había visto esa ruta individualmente.
+function useGeometriasTodas() {
+  const [geometrias, setGeometrias] = useState(() =>
+    Object.fromEntries(ROUTES.map((r) => [r.id, construirGeometriaAproximada(r)]))
+  )
+
+  useEffect(() => {
+    let cancelado = false
+    ROUTES.forEach((r) => {
+      construirGeometriaReal(r)
+        .then((real) => {
+          if (!cancelado) setGeometrias((prev) => ({ ...prev, [r.id]: real }))
+        })
+        .catch(() => {})
+    })
+    return () => {
+      cancelado = true
+    }
+  }, [])
+
+  return geometrias
+}
+
 function elEl(html) {
   const div = document.createElement('div')
   div.innerHTML = html
@@ -58,7 +85,7 @@ function elEl(html) {
 
 export default function PassengerMap() {
   const [choferes, setChoferes] = useState({})
-  const [rutaSeleccionada, setRutaSeleccionada] = useState(null)
+  const [rutaSeleccionada, setRutaSeleccionada] = useState('todas')
   const [paradaSeleccionada, setParadaSeleccionada] = useState(null)
 
   const mapDivRef = useRef(null)
@@ -88,15 +115,15 @@ export default function PassengerMap() {
     [activos]
   )
 
-  const rutaMostrada = rutaSeleccionada
-    ? obtenerRuta(rutaSeleccionada)
-    : ROUTES.find((r) => idsConServicio.has(r.id)) || ROUTES[0]
+  const modoTodas = rutaSeleccionada === 'todas'
+  const rutaMostrada = modoTodas ? null : obtenerRuta(rutaSeleccionada)
 
   const choferDeRutaMostrada = rutaMostrada
     ? activos.find((c) => c.ruta === rutaMostrada.id)
     : null
 
   const geometria = useGeometriaRuta(rutaMostrada)
+  const geometriasTodas = useGeometriasTodas()
 
   const llegadas = useMemo(() => {
     if (!geometria || !choferDeRutaMostrada) return null
@@ -146,13 +173,26 @@ export default function PassengerMap() {
         id: 'ruta-trazado-linea',
         type: 'line',
         source: 'ruta-trazado',
+        paint: { 'line-color': '#146c6e', 'line-width': 4, 'line-opacity': 0.85 },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      })
+
+      map.addSource('todas-rutas', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.addLayer({
+        id: 'todas-rutas-linea',
+        type: 'line',
+        source: 'todas-rutas',
         paint: {
-          'line-color': '#146c6e',
+          'line-color': ['get', 'color'],
           'line-width': 4,
           'line-opacity': 0.8,
         },
         layout: { 'line-cap': 'round', 'line-join': 'round' },
       })
+
       mapListoRef.current = true
       mapRef.current = map
       // fuerza un re-render leve para que los efectos que dependen de
@@ -167,17 +207,20 @@ export default function PassengerMap() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ---- Dibuja/actualiza la línea de la ruta y encuadra el mapa ----
+  // ---- Dibuja/actualiza la línea de UNA ruta y encuadra el mapa ----
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapListoRef.current) return
-    const fuente = map.getSource('ruta-trazado')
-    if (!geometria) {
-      fuente?.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [] } })
+    const fuenteUna = map.getSource('ruta-trazado')
+    const fuenteTodas = map.getSource('todas-rutas')
+    if (modoTodas || !geometria) {
+      fuenteUna?.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [] } })
       return
     }
+    fuenteTodas?.setData({ type: 'FeatureCollection', features: [] })
+
     const coords = geometria.geometry.map(([lat, lng]) => [lng, lat])
-    fuente?.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords } })
+    fuenteUna?.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords } })
     map.setPaintProperty('ruta-trazado-linea', 'line-color', rutaMostrada.color)
 
     const bounds = coords.reduce(
@@ -185,18 +228,46 @@ export default function PassengerMap() {
       new maplibregl.LngLatBounds(coords[0], coords[0])
     )
     map.fitBounds(bounds, { padding: 48, duration: 600 })
-  }, [geometria, rutaMostrada, mapaListo])
+  }, [geometria, rutaMostrada, modoTodas, mapaListo])
 
-  // ---- Marcadores de paradas ----
+  // ---- Dibuja TODAS las rutas a la vez, cada una de su color ----
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapListoRef.current || !modoTodas) return
+
+    const features = ROUTES.map((r) => {
+      const g = geometriasTodas[r.id]
+      return {
+        type: 'Feature',
+        properties: { color: r.color, id: r.id },
+        geometry: {
+          type: 'LineString',
+          coordinates: (g?.geometry || []).map(([lat, lng]) => [lng, lat]),
+        },
+      }
+    })
+
+    map.getSource('todas-rutas')?.setData({ type: 'FeatureCollection', features })
+
+    const todosLosPuntos = features.flatMap((f) => f.geometry.coordinates)
+    if (todosLosPuntos.length) {
+      const bounds = todosLosPuntos.reduce(
+        (b, c) => b.extend(c),
+        new maplibregl.LngLatBounds(todosLosPuntos[0], todosLosPuntos[0])
+      )
+      map.fitBounds(bounds, { padding: 40, duration: 600 })
+    }
+  }, [modoTodas, geometriasTodas, mapaListo])
+
+  // ---- Marcadores de paradas (solo en modo de una ruta) ----
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapListoRef.current) return
 
-    // limpia marcadores anteriores
     marcadoresParadaRef.current.forEach((m) => m.marker.remove())
     marcadoresParadaRef.current.clear()
 
-    if (!listaParadas.length) return
+    if (modoTodas || !listaParadas.length) return
 
     listaParadas.forEach((p) => {
       const esSeleccionada = p.codigo === paradaSeleccionada
@@ -248,7 +319,7 @@ export default function PassengerMap() {
       marcadoresParadaRef.current.set(p.codigo, { marker, popup, lng: p.lng, lat: p.lat })
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [listaParadas, proximaCodigo, paradaSeleccionada, rutaMostrada, mapaListo])
+  }, [listaParadas, proximaCodigo, paradaSeleccionada, rutaMostrada, modoTodas, mapaListo])
 
   // ---- Centra el mapa y abre el popup al elegir una parada ----
   useEffect(() => {
@@ -264,7 +335,7 @@ export default function PassengerMap() {
     entry.marker.togglePopup()
   }, [paradaSeleccionada, mapaListo])
 
-  // ---- Marcadores de trolleys en vivo ----
+  // ---- Marcadores de trolleys en vivo (siempre, en cualquier modo) ----
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapListoRef.current) return
@@ -288,7 +359,6 @@ export default function PassengerMap() {
       }
     })
 
-    // quita los que ya no están activos
     marcadoresTrolleyRef.current.forEach((entry, uid) => {
       if (!vistos.has(uid)) {
         entry.marker.remove()
@@ -299,25 +369,57 @@ export default function PassengerMap() {
 
   return (
     <div className="screen no-pad">
-      <div className="route-tabs">
-        {ROUTES.map((r) => (
-          <button
-            key={r.id}
-            className={rutaMostrada?.id === r.id ? 'active' : ''}
-            style={{ '--tab-color': r.color }}
-            onClick={() => elegirRuta(r.id)}
-          >
-            {idsConServicio.has(r.id) && <span className="tab-live-dot" />}
-            {r.nombre.replace('Ruta ', 'R')}
-          </button>
-        ))}
+      <div className="route-select-wrap">
+        <select
+          className="route-select"
+          value={rutaSeleccionada}
+          onChange={(e) => elegirRuta(e.target.value)}
+        >
+          <option value="todas">🗺️ Todas las rutas</option>
+          {ROUTES.map((r) => (
+            <option key={r.id} value={r.id}>
+              {idsConServicio.has(r.id) ? '🟢 ' : ''}
+              {r.nombre}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="map-wrap">
         <div ref={mapDivRef} style={{ height: '100%', width: '100%' }} />
       </div>
 
-      {geometria && (
+      {modoTodas && (
+        <div className="stops-panel">
+          <div className="stops-panel-header">Leyenda de rutas</div>
+          <div className="route-legend-list">
+            {ROUTES.map((r) => (
+              <div
+                key={r.id}
+                className="route-legend-row"
+                onClick={() => elegirRuta(r.id)}
+                role="button"
+                tabIndex={0}
+              >
+                <span className="stop-dot" style={{ background: r.color }} />
+                <span className="stop-name">{r.nombre}</span>
+                {idsConServicio.has(r.id) ? (
+                  <span className="stop-eta" style={{ color: '#1e8e6f', fontWeight: 700 }}>
+                    En servicio
+                  </span>
+                ) : (
+                  <span className="stop-eta">Sin servicio</span>
+                )}
+              </div>
+            ))}
+          </div>
+          <p className="hint" style={{ padding: '0 4px' }}>
+            Toca una ruta para ver sus paradas y tiempos estimados.
+          </p>
+        </div>
+      )}
+
+      {!modoTodas && geometria && (
         <div className="stops-panel">
           <div className="stops-panel-header" style={{ color: rutaMostrada.color }}>
             {rutaMostrada.nombre}
@@ -389,4 +491,3 @@ function popupTrolleyHtml(ruta, c) {
     </div>
   `
 }
-
