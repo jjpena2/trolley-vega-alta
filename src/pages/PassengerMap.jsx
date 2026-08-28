@@ -83,14 +83,14 @@ export default function PassengerMap() {
     [choferes]
   )
 
-  const rutasActivas = useMemo(() => {
-    const ids = new Set(activos.map((c) => c.ruta).filter(Boolean))
-    return ROUTES.filter((r) => ids.has(r.id))
-  }, [activos])
+  const idsConServicio = useMemo(
+    () => new Set(activos.map((c) => c.ruta).filter(Boolean)),
+    [activos]
+  )
 
   const rutaMostrada = rutaSeleccionada
     ? obtenerRuta(rutaSeleccionada)
-    : rutasActivas[0] || null
+    : ROUTES.find((r) => idsConServicio.has(r.id)) || ROUTES[0]
 
   const choferDeRutaMostrada = rutaMostrada
     ? activos.find((c) => c.ruta === rutaMostrada.id)
@@ -105,6 +105,16 @@ export default function PassengerMap() {
       lng: choferDeRutaMostrada.lng,
     })
   }, [geometria, choferDeRutaMostrada])
+
+  // Si no hay chofer activo en esta ruta, igual mostramos sus paradas
+  // (para que el pasajero pueda ver el recorrido), pero con tiempo N/A.
+  const listaParadas = useMemo(() => {
+    if (llegadas) return llegadas.paradas
+    if (!geometria) return []
+    return geometria.paradas.map((p) => ({ ...p, minutos: null, vuelta: false }))
+  }, [llegadas, geometria])
+
+  const proximaCodigo = llegadas?.proximaCodigo ?? null
 
   function elegirRuta(id) {
     setRutaSeleccionada(id)
@@ -186,11 +196,11 @@ export default function PassengerMap() {
     marcadoresParadaRef.current.forEach((m) => m.marker.remove())
     marcadoresParadaRef.current.clear()
 
-    if (!llegadas) return
+    if (!listaParadas.length) return
 
-    llegadas.paradas.forEach((p) => {
+    listaParadas.forEach((p) => {
       const esSeleccionada = p.codigo === paradaSeleccionada
-      const esProxima = p.codigo === llegadas.proximaCodigo
+      const esProxima = p.codigo === proximaCodigo
       const esConexion = p.conexiones && p.conexiones.length > 0
       const base = esSeleccionada ? 20 : esProxima ? 16 : esConexion ? 15 : 10
       const forma = esConexion ? '30%' : '50%'
@@ -215,10 +225,17 @@ export default function PassengerMap() {
            </div>`
         : ''
 
+      const etaHtml =
+        p.minutos == null
+          ? 'N/A (sin chofer activo)'
+          : p.vuelta
+          ? `~${p.minutos} min (próxima vuelta)`
+          : `~${p.minutos} min`
+
       const popup = new maplibregl.Popup({ offset: 12, closeButton: true }).setHTML(`
         <div class="popup-card">
           <b>${p.nombre}</b><br/>
-          ${p.vuelta ? `~${p.minutos} min (próxima vuelta)` : `~${p.minutos} min`}
+          ${etaHtml}
           ${conexionesHtml}
         </div>
       `)
@@ -231,7 +248,7 @@ export default function PassengerMap() {
       marcadoresParadaRef.current.set(p.codigo, { marker, popup, lng: p.lng, lat: p.lat })
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [llegadas, paradaSeleccionada, rutaMostrada, mapaListo])
+  }, [listaParadas, proximaCodigo, paradaSeleccionada, rutaMostrada, mapaListo])
 
   // ---- Centra el mapa y abre el popup al elegir una parada ----
   useEffect(() => {
@@ -282,51 +299,51 @@ export default function PassengerMap() {
 
   return (
     <div className="screen no-pad">
-      {rutasActivas.length > 1 && (
-        <div className="route-tabs">
-          {rutasActivas.map((r) => (
-            <button
-              key={r.id}
-              className={rutaMostrada?.id === r.id ? 'active' : ''}
-              style={{ '--tab-color': r.color }}
-              onClick={() => elegirRuta(r.id)}
-            >
-              {r.nombre.replace('Ruta ', 'R')}
-            </button>
-          ))}
-        </div>
-      )}
+      <div className="route-tabs">
+        {ROUTES.map((r) => (
+          <button
+            key={r.id}
+            className={rutaMostrada?.id === r.id ? 'active' : ''}
+            style={{ '--tab-color': r.color }}
+            onClick={() => elegirRuta(r.id)}
+          >
+            {idsConServicio.has(r.id) && <span className="tab-live-dot" />}
+            {r.nombre.replace('Ruta ', 'R')}
+          </button>
+        ))}
+      </div>
 
       <div className="map-wrap">
         <div ref={mapDivRef} style={{ height: '100%', width: '100%' }} />
-
-        {!rutaMostrada && (
-          <div className="map-legend">
-            <p className="empty-state">
-              No hay trolleys en servicio ahora mismo. Vuelve a revisar en
-              unos minutos.
-            </p>
-          </div>
-        )}
       </div>
 
-      {llegadas && (
+      {geometria && (
         <div className="stops-panel">
           <div className="stops-panel-header" style={{ color: rutaMostrada.color }}>
-            {rutaMostrada.nombre} — {choferDeRutaMostrada.nombre}
+            {rutaMostrada.nombre}
+            {choferDeRutaMostrada && ` — ${choferDeRutaMostrada.nombre}`}
           </div>
-          {geometria?.esAproximada && (
+
+          {!choferDeRutaMostrada && (
+            <div className="no-service-banner">
+              🚫 No hay ningún trolley activo en esta ruta ahora mismo. Los
+              tiempos se muestran como N/A.
+            </div>
+          )}
+
+          {geometria.esAproximada && (
             <p className="hint" style={{ padding: '0 4px', marginTop: 0 }}>
               Cargando trazado real por carreteras…
             </p>
           )}
+
           <div className="stops-list">
-            {llegadas.paradas.map((p) => (
+            {listaParadas.map((p) => (
               <div
                 key={p.codigo}
                 className={
                   'stop-row' +
-                  (p.codigo === llegadas.proximaCodigo ? ' next' : '') +
+                  (p.codigo === proximaCodigo ? ' next' : '') +
                   (p.codigo === paradaSeleccionada ? ' selected' : '')
                 }
                 onClick={() => elegirParada(p.codigo)}
@@ -346,7 +363,7 @@ export default function PassengerMap() {
                   )}
                 </span>
                 <span className="stop-eta">
-                  {p.minutos <= 0 ? 'Aquí' : `${p.minutos} min`}
+                  {p.minutos == null ? 'N/A' : p.minutos <= 0 ? 'Aquí' : `${p.minutos} min`}
                   {p.vuelta ? ' *' : ''}
                 </span>
               </div>
@@ -372,3 +389,4 @@ function popupTrolleyHtml(ruta, c) {
     </div>
   `
 }
+
