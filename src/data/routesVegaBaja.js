@@ -196,6 +196,30 @@ export function obtenerRuta(id) {
   return ROUTES.find((r) => r.id === id) || null
 }
 
+// ---------- Puntos de conexión entre rutas ----------
+// Si dos o más rutas comparten exactamente la misma parada ancla (la
+// misma coordenada real, como "Antigua Estación del Tren" en la Ruta 1
+// y la Ruta 2), esa parada es un punto de transbordo: el pasajero puede
+// bajarse de un trolley y tomar otro ahí mismo.
+const anclaARutas = new Map()
+ROUTES.forEach((r) => {
+  r.paradas.forEach((p) => {
+    if (!p.ancla) return
+    if (!anclaARutas.has(p.ancla)) anclaARutas.set(p.ancla, new Set())
+    anclaARutas.get(p.ancla).add(r.id)
+  })
+})
+
+function conexionesDe(parada, rutaActualId) {
+  if (!parada.ancla) return []
+  const ids = anclaARutas.get(parada.ancla)
+  if (!ids || ids.size < 2) return []
+  return [...ids]
+    .filter((id) => id !== rutaActualId)
+    .map((id) => obtenerRuta(id))
+    .filter(Boolean)
+}
+
 
 // ---------- Geometría: primero una versión rápida en línea recta,  ----------
 // ---------- y luego la versión real siguiendo carreteras (OSRM)    ----------
@@ -241,7 +265,13 @@ export function construirGeometriaAproximada(ruta) {
   let acumulada = 0
   const paradasConGeo = paradas.map((p, i) => {
     if (i > 0) acumulada += haversineKm(coords[i - 1], coords[i])
-    return { ...p, lat: coords[i][0], lng: coords[i][1], distanciaKm: acumulada }
+    return {
+      ...p,
+      lat: coords[i][0],
+      lng: coords[i][1],
+      distanciaKm: acumulada,
+      conexiones: conexionesDe(p, ruta.id),
+    }
   })
 
   return {
@@ -344,7 +374,7 @@ export async function construirGeometriaReal(ruta) {
       distReal = prevDist + (nextDist - prevDist) * t
     }
     const [lat, lng] = puntoADistancia(geometry, geomAcumulada, distReal)
-    return { ...p, lat, lng, distanciaKm: distReal }
+    return { ...p, lat, lng, distanciaKm: distReal, conexiones: conexionesDe(p, ruta.id) }
   })
 
   const resultado = {
