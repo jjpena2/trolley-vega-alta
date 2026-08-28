@@ -3,14 +3,9 @@ import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { onValue, ref } from 'firebase/database'
 import { db } from '../firebase'
+import { useRoutes } from '../context/RoutesContext'
 import {
-  ROUTES,
-  obtenerRuta,
-  construirGeometriaAproximada,
-  construirGeometriaReal,
   calcularLlegadasPorDistancia,
-  RUTA_A_LUGARES,
-  planificarViaje,
   segmentoEntreDistancias,
   distanciaDeParada,
 } from '../data/routesVegaBaja'
@@ -29,7 +24,7 @@ const ESTILO_MAPA = 'https://tiles.openfreemap.org/styles/liberty'
 // servicio de rutas responde, la reemplaza por la real (siguiendo
 // carreteras). Si el servicio falla (sin internet, etc.) se queda con
 // la aproximada.
-function useGeometriaRuta(ruta) {
+function useGeometriaRuta(ruta, motor) {
   const [geometria, setGeometria] = useState(null)
 
   useEffect(() => {
@@ -37,9 +32,10 @@ function useGeometriaRuta(ruta) {
       setGeometria(null)
       return
     }
-    setGeometria(construirGeometriaAproximada(ruta))
+    setGeometria(motor.geometriaAproximadaConConexiones(ruta))
     let cancelado = false
-    construirGeometriaReal(ruta)
+    motor
+      .geometriaRealConConexiones(ruta)
       .then((real) => {
         if (!cancelado) setGeometria(real)
       })
@@ -49,7 +45,8 @@ function useGeometriaRuta(ruta) {
     return () => {
       cancelado = true
     }
-  }, [ruta])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ruta, motor])
 
   return geometria
 }
@@ -59,15 +56,17 @@ function useGeometriaRuta(ruta) {
 // va actualizando a la real conforme responde el servicio de rutas.
 // Como construirGeometriaReal cachea por ruta, esto no vuelve a pedir
 // nada si el pasajero ya había visto esa ruta individualmente.
-function useGeometriasTodas() {
-  const [geometrias, setGeometrias] = useState(() =>
-    Object.fromEntries(ROUTES.map((r) => [r.id, construirGeometriaAproximada(r)]))
-  )
+function useGeometriasTodas(rutas, motor) {
+  const [geometrias, setGeometrias] = useState({})
 
   useEffect(() => {
+    setGeometrias(
+      Object.fromEntries(rutas.map((r) => [r.id, motor.geometriaAproximadaConConexiones(r)]))
+    )
     let cancelado = false
-    ROUTES.forEach((r) => {
-      construirGeometriaReal(r)
+    rutas.forEach((r) => {
+      motor
+        .geometriaRealConConexiones(r)
         .then((real) => {
           if (!cancelado) setGeometrias((prev) => ({ ...prev, [r.id]: real }))
         })
@@ -76,7 +75,8 @@ function useGeometriasTodas() {
     return () => {
       cancelado = true
     }
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rutas, motor])
 
   return geometrias
 }
@@ -88,6 +88,7 @@ function elEl(html) {
 }
 
 export default function PassengerMap() {
+  const { rutas, motor } = useRoutes()
   const [choferes, setChoferes] = useState({})
   const [rutaSeleccionada, setRutaSeleccionada] = useState('todas')
   const [paradaSeleccionada, setParadaSeleccionada] = useState(null)
@@ -126,14 +127,14 @@ export default function PassengerMap() {
   const modoTodas = rutaSeleccionada === 'todas'
   const modoPlanificar = rutaSeleccionada === 'planificar'
   const rutaMostrada =
-    modoTodas || modoPlanificar ? null : obtenerRuta(rutaSeleccionada)
+    modoTodas || modoPlanificar ? null : motor.obtenerRuta(rutaSeleccionada)
 
   const choferDeRutaMostrada = rutaMostrada
     ? activos.find((c) => c.ruta === rutaMostrada.id)
     : null
 
-  const geometria = useGeometriaRuta(rutaMostrada)
-  const geometriasTodas = useGeometriasTodas()
+  const geometria = useGeometriaRuta(rutaMostrada, motor)
+  const geometriasTodas = useGeometriasTodas(rutas, motor)
 
   const llegadas = useMemo(() => {
     if (!geometria || !choferDeRutaMostrada) return null
@@ -164,7 +165,7 @@ export default function PassengerMap() {
 
   function buscarPlan() {
     if (!textoOrigen.trim() || !textoDestino.trim()) return
-    const resultado = planificarViaje(textoOrigen, textoDestino)
+    const resultado = motor.planificarViaje(textoOrigen, textoDestino)
     setPlan(resultado)
   }
 
@@ -172,9 +173,9 @@ export default function PassengerMap() {
   // en el mapa (real si ya se cargó, aproximada si no) — así el pin y
   // la línea siempre coinciden exactamente.
   function coordDeParadaEnRuta(routeId, codigo) {
-    const ruta = obtenerRuta(routeId)
+    const ruta = motor.obtenerRuta(routeId)
     if (!ruta) return null
-    const g = geometriasTodas[routeId] || construirGeometriaAproximada(ruta)
+    const g = geometriasTodas[routeId] || motor.geometriaAproximadaConConexiones(ruta)
     const p = g.paradas.find((x) => x.codigo === codigo)
     return p ? [p.lat, p.lng] : null
   }
@@ -269,7 +270,7 @@ export default function PassengerMap() {
     const map = mapRef.current
     if (!map || !mapListoRef.current || !modoTodas) return
 
-    const features = ROUTES.map((r) => {
+    const features = rutas.map((r) => {
       const g = geometriasTodas[r.id]
       return {
         type: 'Feature',
@@ -291,7 +292,7 @@ export default function PassengerMap() {
       )
       map.fitBounds(bounds, { padding: 40, duration: 600 })
     }
-  }, [modoTodas, geometriasTodas, mapaListo])
+  }, [modoTodas, geometriasTodas, rutas, mapaListo])
 
   // ---- Dibuja el plan de viaje: rutas involucradas + pines de origen,
   // transbordo y destino ----
@@ -313,7 +314,7 @@ export default function PassengerMap() {
     const features = []
 
     if (plan?.tipo === 'directo') {
-      const g = geometriasTodas[plan.ruta.id] || construirGeometriaAproximada(plan.ruta)
+      const g = geometriasTodas[plan.ruta.id] || motor.geometriaAproximadaConConexiones(plan.ruta)
       const dDesde = distanciaDeParada(g, plan.origen.codigo)
       const dHasta = distanciaDeParada(g, plan.destino.codigo)
       if (dDesde != null && dHasta != null) {
@@ -325,8 +326,8 @@ export default function PassengerMap() {
         })
       }
     } else if (plan?.tipo === 'transbordo') {
-      const g1 = geometriasTodas[plan.ruta1.id] || construirGeometriaAproximada(plan.ruta1)
-      const g2 = geometriasTodas[plan.ruta2.id] || construirGeometriaAproximada(plan.ruta2)
+      const g1 = geometriasTodas[plan.ruta1.id] || motor.geometriaAproximadaConConexiones(plan.ruta1)
+      const g2 = geometriasTodas[plan.ruta2.id] || motor.geometriaAproximadaConConexiones(plan.ruta2)
       const d1Desde = distanciaDeParada(g1, plan.origen.codigo)
       const d1Hasta = distanciaDeParada(g1, plan.transbordo.codigo1)
       const d2Desde = distanciaDeParada(g2, plan.transbordo.codigo2)
@@ -388,7 +389,7 @@ export default function PassengerMap() {
       )
       map.fitBounds(bounds, { padding: 60, duration: 600 })
     }
-  }, [plan, modoPlanificar, geometriasTodas, mapaListo])
+  }, [plan, modoPlanificar, geometriasTodas, motor, mapaListo])
 
   // ---- Marcadores de paradas (solo en modo de una ruta) ----
   useEffect(() => {
@@ -474,7 +475,7 @@ export default function PassengerMap() {
     const vistos = new Set()
     activos.forEach((c) => {
       vistos.add(c.uid)
-      const ruta = obtenerRuta(c.ruta)
+      const ruta = motor.obtenerRuta(c.ruta)
       const existente = marcadoresTrolleyRef.current.get(c.uid)
       if (existente) {
         existente.marker.setLngLat([c.lng, c.lat])
@@ -496,7 +497,7 @@ export default function PassengerMap() {
         marcadoresTrolleyRef.current.delete(uid)
       }
     })
-  }, [activos, mapaListo])
+  }, [activos, motor, mapaListo])
 
   return (
     <div className="screen no-pad">
@@ -508,7 +509,7 @@ export default function PassengerMap() {
         >
           <option value="todas">🗺️ Todas las rutas</option>
           <option value="planificar">📍 Planificar viaje</option>
-          {ROUTES.map((r) => (
+          {rutas.map((r) => (
             <option key={r.id} value={r.id}>
               {idsConServicio.has(r.id) ? '🟢 ' : ''}
               {r.nombre}
@@ -534,7 +535,7 @@ export default function PassengerMap() {
                 onChange={(e) => setTextoOrigen(e.target.value)}
               >
                 <option value="">Selecciona una parada…</option>
-                {RUTA_A_LUGARES.map((grupo) => (
+                {motor.RUTA_A_LUGARES.map((grupo) => (
                   <optgroup key={grupo.routeId} label={grupo.routeNombre}>
                     {grupo.lugares.map((nombre) => (
                       <option key={grupo.routeId + nombre} value={nombre}>
@@ -553,7 +554,7 @@ export default function PassengerMap() {
                 onChange={(e) => setTextoDestino(e.target.value)}
               >
                 <option value="">Selecciona una parada…</option>
-                {RUTA_A_LUGARES.map((grupo) => (
+                {motor.RUTA_A_LUGARES.map((grupo) => (
                   <optgroup key={grupo.routeId} label={grupo.routeNombre}>
                     {grupo.lugares.map((nombre) => (
                       <option key={grupo.routeId + nombre} value={nombre}>
@@ -701,7 +702,7 @@ export default function PassengerMap() {
         <div className="stops-panel">
           <div className="stops-panel-header">Leyenda de rutas</div>
           <div className="route-legend-list">
-            {ROUTES.map((r) => (
+            {rutas.map((r) => (
               <div
                 key={r.id}
                 className="route-legend-row"

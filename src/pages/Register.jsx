@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { ROUTES } from '../data/routesVegaBaja'
+import { useRoutes } from '../context/RoutesContext'
 
 export default function Register() {
   const { register } = useAuth()
+  const { rutas } = useRoutes()
   const navigate = useNavigate()
 
   const [rol, setRol] = useState('pasajero')
@@ -12,9 +13,13 @@ export default function Register() {
   const [correo, setCorreo] = useState('')
   const [contrasena, setContrasena] = useState('')
   const [telefono, setTelefono] = useState('')
-  const [rutaId, setRutaId] = useState(ROUTES[0].id)
+  const [rutaId, setRutaId] = useState('')
   const [error, setError] = useState('')
   const [cargando, setCargando] = useState(false)
+
+  useEffect(() => {
+    if (!rutaId && rutas.length) setRutaId(rutas[0].id)
+  }, [rutas, rutaId])
 
   async function onSubmit(e) {
     e.preventDefault()
@@ -134,7 +139,7 @@ export default function Register() {
                   value={rutaId}
                   onChange={(e) => setRutaId(e.target.value)}
                 >
-                  {ROUTES.map((r) => (
+                  {rutas.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.nombre}
                     </option>

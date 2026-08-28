@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ref, onDisconnect, update } from 'firebase/database'
 import { db } from '../firebase'
 import { useAuth } from '../context/AuthContext'
-import { obtenerRuta, calcularLlegadasPorDistancia, construirGeometriaAproximada, construirGeometriaReal } from '../data/routesVegaBaja'
+import { useRoutes } from '../context/RoutesContext'
+import { calcularLlegadasPorDistancia } from '../data/routesVegaBaja'
 
 export default function DriverDashboard() {
   const { user, profile } = useAuth()
+  const { motor } = useRoutes()
   const [enServicio, setEnServicio] = useState(false)
   const [ultimaPosicion, setUltimaPosicion] = useState(null)
   const [precision, setPrecision] = useState(null)
@@ -13,14 +15,15 @@ export default function DriverDashboard() {
   const watchIdRef = useRef(null)
 
   const choferRef = ref(db, `choferesActivos/${user.uid}`)
-  const ruta = obtenerRuta(profile?.ruta)
+  const ruta = motor.obtenerRuta(profile?.ruta)
   const [geometria, setGeometria] = useState(null)
 
   useEffect(() => {
     if (!ruta) return
-    setGeometria(construirGeometriaAproximada(ruta))
+    setGeometria(motor.geometriaAproximadaConConexiones(ruta))
     let cancelado = false
-    construirGeometriaReal(ruta)
+    motor
+      .geometriaRealConConexiones(ruta)
       .then((real) => {
         if (!cancelado) setGeometria(real)
       })
@@ -28,6 +31,7 @@ export default function DriverDashboard() {
     return () => {
       cancelado = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ruta])
 
   const llegadas = useMemo(() => {
@@ -48,6 +52,10 @@ export default function DriverDashboard() {
   }, [])
 
   function iniciarServicio() {
+    if (profile?.habilitado === false) {
+      setError('Tu cuenta de chofer está deshabilitada. Contacta al administrador.')
+      return
+    }
     if (!('geolocation' in navigator)) {
       setError('Este dispositivo no soporta geolocalización.')
       return
@@ -108,9 +116,17 @@ export default function DriverDashboard() {
 
         {error && <div className="error-banner">{error}</div>}
 
+        {profile?.habilitado === false && (
+          <div className="error-banner">
+            Tu cuenta de chofer está deshabilitada por el administrador. No
+            puedes activar el servicio hasta que te habiliten de nuevo.
+          </div>
+        )}
+
         <button
           className={`big-toggle ${enServicio ? 'stop' : 'start'}`}
           onClick={enServicio ? detenerServicio : iniciarServicio}
+          disabled={!enServicio && profile?.habilitado === false}
         >
           {enServicio ? 'Terminar servicio' : 'Comenzar servicio'}
         </button>
