@@ -1,5 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker } from 'react-leaflet'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  Polyline,
+  CircleMarker,
+  useMap,
+} from 'react-leaflet'
 import L from 'leaflet'
 import { onValue, ref } from 'firebase/database'
 import { db } from '../firebase'
@@ -53,9 +61,37 @@ function useGeometriaRuta(ruta) {
   return geometria
 }
 
+// Vive DENTRO de <MapContainer> para poder controlar el mapa:
+// - Cuando cambia la geometría de la ruta mostrada, encuadra el mapa a
+//   toda la ruta (zoom automático).
+// - Cuando el pasajero toca una parada en la lista, centra el mapa ahí
+//   y abre su popup.
+function ControladorDeMapa({ geometria, paradaSeleccionada, paradas, marcadoresRef }) {
+  const map = useMap()
+
+  useEffect(() => {
+    if (!geometria?.geometry?.length) return
+    const bounds = L.latLngBounds(geometria.geometry)
+    map.fitBounds(bounds, { padding: [32, 32] })
+  }, [geometria, map])
+
+  useEffect(() => {
+    if (!paradaSeleccionada || !paradas) return
+    const p = paradas.find((x) => x.codigo === paradaSeleccionada)
+    if (!p) return
+    map.flyTo([p.lat, p.lng], Math.max(map.getZoom(), 16), { duration: 0.6 })
+    const marker = marcadoresRef.current.get(p.codigo)
+    if (marker) marker.openPopup()
+  }, [paradaSeleccionada, paradas, map, marcadoresRef])
+
+  return null
+}
+
 export default function PassengerMap() {
   const [choferes, setChoferes] = useState({})
   const [rutaSeleccionada, setRutaSeleccionada] = useState(null)
+  const [paradaSeleccionada, setParadaSeleccionada] = useState(null)
+  const marcadoresRef = useRef(new Map())
 
   useEffect(() => {
     const choferesRef = ref(db, 'choferesActivos')
@@ -96,6 +132,15 @@ export default function PassengerMap() {
     })
   }, [geometria, choferDeRutaMostrada])
 
+  function elegirRuta(id) {
+    setRutaSeleccionada(id)
+    setParadaSeleccionada(null)
+  }
+
+  function elegirParada(codigo) {
+    setParadaSeleccionada((actual) => (actual === codigo ? null : codigo))
+  }
+
   return (
     <div className="screen no-pad">
       {rutasActivas.length > 1 && (
@@ -105,7 +150,7 @@ export default function PassengerMap() {
               key={r.id}
               className={rutaMostrada?.id === r.id ? 'active' : ''}
               style={{ '--tab-color': r.color }}
-              onClick={() => setRutaSeleccionada(r.id)}
+              onClick={() => elegirRuta(r.id)}
             >
               {r.nombre.replace('Ruta ', 'R')}
             </button>
@@ -125,6 +170,13 @@ export default function PassengerMap() {
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
 
+          <ControladorDeMapa
+            geometria={geometria}
+            paradaSeleccionada={paradaSeleccionada}
+            paradas={llegadas?.paradas}
+            marcadoresRef={marcadoresRef}
+          />
+
           {geometria && (
             <Polyline
               positions={geometria.geometry}
@@ -133,30 +185,38 @@ export default function PassengerMap() {
           )}
 
           {llegadas &&
-            llegadas.paradas.map((p) => (
-              <CircleMarker
-                key={p.codigo}
-                center={[p.lat, p.lng]}
-                radius={p.codigo === llegadas.proximaCodigo ? 7 : 4}
-                pathOptions={{
-                  color: rutaMostrada.color,
-                  fillColor:
-                    p.codigo === llegadas.proximaCodigo ? rutaMostrada.color : '#fff',
-                  fillOpacity: 1,
-                  weight: 2,
-                }}
-              >
-                <Popup>
-                  <div className="popup-card">
-                    <b>{p.nombre}</b>
-                    <br />
-                    {p.vuelta
-                      ? `~${p.minutos} min (próxima vuelta)`
-                      : `~${p.minutos} min`}
-                  </div>
-                </Popup>
-              </CircleMarker>
-            ))}
+            llegadas.paradas.map((p) => {
+              const esSeleccionada = p.codigo === paradaSeleccionada
+              const esProxima = p.codigo === llegadas.proximaCodigo
+              return (
+                <CircleMarker
+                  key={p.codigo}
+                  ref={(el) => {
+                    if (el) marcadoresRef.current.set(p.codigo, el)
+                    else marcadoresRef.current.delete(p.codigo)
+                  }}
+                  center={[p.lat, p.lng]}
+                  radius={esSeleccionada ? 10 : esProxima ? 7 : 4}
+                  pathOptions={{
+                    color: esSeleccionada ? '#17262a' : rutaMostrada.color,
+                    fillColor: esProxima || esSeleccionada ? rutaMostrada.color : '#fff',
+                    fillOpacity: 1,
+                    weight: esSeleccionada ? 3 : 2,
+                  }}
+                  eventHandlers={{ click: () => elegirParada(p.codigo) }}
+                >
+                  <Popup>
+                    <div className="popup-card">
+                      <b>{p.nombre}</b>
+                      <br />
+                      {p.vuelta
+                        ? `~${p.minutos} min (próxima vuelta)`
+                        : `~${p.minutos} min`}
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              )
+            })}
 
           {activos.map((c) => (
             <Marker key={c.uid} position={[c.lat, c.lng]} icon={trolleyIcon}>
@@ -196,8 +256,13 @@ export default function PassengerMap() {
               <div
                 key={p.codigo}
                 className={
-                  'stop-row' + (p.codigo === llegadas.proximaCodigo ? ' next' : '')
+                  'stop-row' +
+                  (p.codigo === llegadas.proximaCodigo ? ' next' : '') +
+                  (p.codigo === paradaSeleccionada ? ' selected' : '')
                 }
+                onClick={() => elegirParada(p.codigo)}
+                role="button"
+                tabIndex={0}
               >
                 <span className="stop-dot" style={{ background: rutaMostrada.color }} />
                 <span className="stop-name">{p.nombre}</span>
@@ -211,7 +276,7 @@ export default function PassengerMap() {
           <p className="hint" style={{ padding: '0 4px' }}>
             Tiempos estimados según la posición GPS actual del chofer y la
             distancia real por carretera a cada parada (no es un horario
-            fijo). * = próxima vuelta.
+            fijo). * = próxima vuelta. Toca una parada para verla en el mapa.
           </p>
         </div>
       )}
