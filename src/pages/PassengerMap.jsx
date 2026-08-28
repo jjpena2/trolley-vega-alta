@@ -9,7 +9,7 @@ import {
   construirGeometriaAproximada,
   construirGeometriaReal,
   calcularLlegadasPorDistancia,
-  LUGARES,
+  RUTA_A_LUGARES,
   planificarViaje,
   obtenerCoordenadaParada,
   segmentoEntreDistancias,
@@ -87,10 +87,6 @@ function elEl(html) {
   div.innerHTML = html
   return div.firstElementChild
 }
-
-const LUGARES_NOMBRES = [...new Set(LUGARES.map((l) => l.nombre))].sort((a, b) =>
-  a.localeCompare(b, 'es')
-)
 
 export default function PassengerMap() {
   const [choferes, setChoferes] = useState({})
@@ -522,29 +518,42 @@ export default function PassengerMap() {
           <div className="planner-form">
             <div className="field" style={{ marginBottom: 10 }}>
               <label htmlFor="origen">Desde</label>
-              <input
+              <select
                 id="origen"
-                list="lugares-lista"
                 value={textoOrigen}
                 onChange={(e) => setTextoOrigen(e.target.value)}
-                placeholder="Ej. Escuela de Bellas Artes"
-              />
+              >
+                <option value="">Selecciona una parada…</option>
+                {RUTA_A_LUGARES.map((grupo) => (
+                  <optgroup key={grupo.routeId} label={grupo.routeNombre}>
+                    {grupo.lugares.map((nombre) => (
+                      <option key={grupo.routeId + nombre} value={nombre}>
+                        {nombre}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
             </div>
             <div className="field" style={{ marginBottom: 10 }}>
               <label htmlFor="destino">Hasta</label>
-              <input
+              <select
                 id="destino"
-                list="lugares-lista"
                 value={textoDestino}
                 onChange={(e) => setTextoDestino(e.target.value)}
-                placeholder="Ej. Área Recreativa El Trece"
-              />
+              >
+                <option value="">Selecciona una parada…</option>
+                {RUTA_A_LUGARES.map((grupo) => (
+                  <optgroup key={grupo.routeId} label={grupo.routeNombre}>
+                    {grupo.lugares.map((nombre) => (
+                      <option key={grupo.routeId + nombre} value={nombre}>
+                        {nombre}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
             </div>
-            <datalist id="lugares-lista">
-              {LUGARES_NOMBRES.map((n) => (
-                <option key={n} value={n} />
-              ))}
-            </datalist>
             <button className="btn-primary" onClick={buscarPlan}>
               Buscar ruta
             </button>
