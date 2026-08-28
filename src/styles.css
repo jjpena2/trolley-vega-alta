@@ -263,6 +263,14 @@ a {
   font-family: var(--font-body);
 }
 
+/* Los tiles de OpenStreetMap son gratis y no requieren llave, pero se
+   ven "cargados" por defecto. Este filtro los suaviza (menos saturación,
+   más brillo/contraste) para un look más limpio y moderno, sin depender
+   de ningún servicio de mapas de pago. */
+.leaflet-tile-pane {
+  filter: saturate(0.75) brightness(1.08) contrast(0.95);
+}
+
 /* Controles de zoom estilo Google Maps/Waze: botones redondos flotantes */
 .leaflet-control-zoom {
   border: none !important;
