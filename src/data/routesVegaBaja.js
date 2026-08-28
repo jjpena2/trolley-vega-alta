@@ -592,6 +592,39 @@ export function obtenerTrazado(geometria) {
   return geometria.geometry
 }
 
+// Devuelve solo el TRAMO de la línea de una ruta entre dos distancias
+// acumuladas (en km) — para dibujar únicamente el pedazo que el
+// pasajero realmente va a recorrer, no la ruta completa. Si
+// distanciaHasta es menor que distanciaDesde, se asume que el tramo da
+// la vuelta completa (pasa por el final del ciclo y sigue desde el
+// principio).
+export function segmentoEntreDistancias(geometria, distanciaDesde, distanciaHasta) {
+  const puntos = geometria.geometry
+  const acumulada = geometria.geometryAcumulada || acumularDistancias(puntos)
+  const total = acumulada[acumulada.length - 1]
+
+  function tramo(dA, dB) {
+    const resultado = [puntoADistancia(puntos, acumulada, dA)]
+    for (let i = 0; i < puntos.length; i++) {
+      if (acumulada[i] > dA && acumulada[i] < dB) resultado.push(puntos[i])
+    }
+    resultado.push(puntoADistancia(puntos, acumulada, dB))
+    return resultado
+  }
+
+  if (distanciaHasta >= distanciaDesde) {
+    return tramo(distanciaDesde, distanciaHasta)
+  }
+  return [...tramo(distanciaDesde, total), ...tramo(0, distanciaHasta)]
+}
+
+// Devuelve la distancia acumulada (km) de una parada específica dentro
+// de una geometría ya construida (real o aproximada).
+export function distanciaDeParada(geometria, codigo) {
+  const p = geometria.paradas.find((x) => x.codigo === codigo)
+  return p ? p.distanciaKm : null
+}
+
 // Coordenadas [lat,lng] de una parada específica (por ruta y código),
 // usando la versión aproximada (rápida, sin esperar el servicio de
 // rutas) — suficiente para ubicar un pin en el mapa.
