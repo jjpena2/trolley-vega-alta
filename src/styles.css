@@ -499,6 +499,9 @@ a {
 
 .route-tabs button {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 1.5px solid var(--line);
   background: #fff;
   color: var(--ink-500);
@@ -513,6 +516,24 @@ a {
   border-color: var(--tab-color, var(--teal-700));
   background: var(--tab-color, var(--teal-700));
   color: #fff;
+}
+
+.tab-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2ecc71;
+  flex-shrink: 0;
+  animation: pulse 1.6s infinite;
+}
+
+.no-service-banner {
+  background: rgba(232, 93, 78, 0.1);
+  color: #a83226;
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 0.82rem;
+  margin-bottom: 12px;
 }
 
 .stops-panel {
