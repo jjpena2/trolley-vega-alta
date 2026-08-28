@@ -3,11 +3,17 @@ import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker } from '
 import L from 'leaflet'
 import { onValue, ref } from 'firebase/database'
 import { db } from '../firebase'
-import { ROUTES, obtenerRuta, obtenerTrazado, calcularLlegadasPorDistancia } from '../data/routesVegaBaja'
+import {
+  ROUTES,
+  obtenerRuta,
+  construirGeometriaAproximada,
+  construirGeometriaReal,
+  calcularLlegadasPorDistancia,
+} from '../data/routesVegaBaja'
 
-// Centro aproximado del pueblo (ajusta esto cuando tengas las
-// coordenadas reales de Vega Alta / tu municipio)
-const CENTRO_MAPA = [18.4130, -66.3944]
+// Centro aproximado del mapa (ajusta esto cuando tengas las coordenadas
+// reales de Vega Alta / tu municipio)
+const CENTRO_MAPA = [18.413, -66.3944]
 
 const trolleyIcon = L.divIcon({
   className: '',
@@ -16,6 +22,36 @@ const trolleyIcon = L.divIcon({
   iconAnchor: [17, 30],
   popupAnchor: [0, -28],
 })
+
+// Hook: carga la geometría de una ruta. Muestra de inmediato la versión
+// aproximada (línea recta entre puntos conocidos) y, en cuanto el
+// servicio de rutas responde, la reemplaza por la real (siguiendo
+// carreteras). Si el servicio falla (sin internet, etc.) se queda con
+// la aproximada.
+function useGeometriaRuta(ruta) {
+  const [geometria, setGeometria] = useState(null)
+
+  useEffect(() => {
+    if (!ruta) {
+      setGeometria(null)
+      return
+    }
+    setGeometria(construirGeometriaAproximada(ruta))
+    let cancelado = false
+    construirGeometriaReal(ruta)
+      .then((real) => {
+        if (!cancelado) setGeometria(real)
+      })
+      .catch(() => {
+        // se queda con la aproximada, no pasa nada
+      })
+    return () => {
+      cancelado = true
+    }
+  }, [ruta])
+
+  return geometria
+}
 
 export default function PassengerMap() {
   const [choferes, setChoferes] = useState({})
@@ -37,7 +73,6 @@ export default function PassengerMap() {
     [choferes]
   )
 
-  // Rutas que tienen al menos un trolley activo ahora mismo
   const rutasActivas = useMemo(() => {
     const ids = new Set(activos.map((c) => c.ruta).filter(Boolean))
     return ROUTES.filter((r) => ids.has(r.id))
@@ -51,15 +86,15 @@ export default function PassengerMap() {
     ? activos.find((c) => c.ruta === rutaMostrada.id)
     : null
 
+  const geometria = useGeometriaRuta(rutaMostrada)
+
   const llegadas = useMemo(() => {
-    if (!rutaMostrada || !choferDeRutaMostrada) return null
-    return calcularLlegadasPorDistancia(rutaMostrada, {
+    if (!geometria || !choferDeRutaMostrada) return null
+    return calcularLlegadasPorDistancia(geometria, {
       lat: choferDeRutaMostrada.lat,
       lng: choferDeRutaMostrada.lng,
     })
-  }, [rutaMostrada, choferDeRutaMostrada])
-
-  const trazado = rutaMostrada ? obtenerTrazado(rutaMostrada) : null
+  }, [geometria, choferDeRutaMostrada])
 
   return (
     <div className="screen no-pad">
@@ -90,9 +125,9 @@ export default function PassengerMap() {
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
 
-          {trazado && (
+          {geometria && (
             <Polyline
-              positions={trazado}
+              positions={geometria.geometry}
               pathOptions={{ color: rutaMostrada.color, weight: 4, opacity: 0.75 }}
             />
           )}
@@ -151,6 +186,11 @@ export default function PassengerMap() {
           <div className="stops-panel-header" style={{ color: rutaMostrada.color }}>
             {rutaMostrada.nombre} — {choferDeRutaMostrada.nombre}
           </div>
+          {geometria?.esAproximada && (
+            <p className="hint" style={{ padding: '0 4px', marginTop: 0 }}>
+              Cargando trazado real por carreteras…
+            </p>
+          )}
           <div className="stops-list">
             {llegadas.paradas.map((p) => (
               <div
@@ -170,8 +210,8 @@ export default function PassengerMap() {
           </div>
           <p className="hint" style={{ padding: '0 4px' }}>
             Tiempos estimados según la posición GPS actual del chofer y la
-            distancia a cada parada (no es un horario fijo). * = próxima
-            vuelta.
+            distancia real por carretera a cada parada (no es un horario
+            fijo). * = próxima vuelta.
           </p>
         </div>
       )}

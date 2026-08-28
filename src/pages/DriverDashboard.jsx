@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ref, onDisconnect, update } from 'firebase/database'
 import { db } from '../firebase'
 import { useAuth } from '../context/AuthContext'
-import { obtenerRuta, calcularLlegadasPorDistancia } from '../data/routesVegaBaja'
+import { obtenerRuta, calcularLlegadasPorDistancia, construirGeometriaAproximada, construirGeometriaReal } from '../data/routesVegaBaja'
 
 export default function DriverDashboard() {
   const { user, profile } = useAuth()
@@ -14,11 +14,26 @@ export default function DriverDashboard() {
 
   const choferRef = ref(db, `choferesActivos/${user.uid}`)
   const ruta = obtenerRuta(profile?.ruta)
+  const [geometria, setGeometria] = useState(null)
+
+  useEffect(() => {
+    if (!ruta) return
+    setGeometria(construirGeometriaAproximada(ruta))
+    let cancelado = false
+    construirGeometriaReal(ruta)
+      .then((real) => {
+        if (!cancelado) setGeometria(real)
+      })
+      .catch(() => {})
+    return () => {
+      cancelado = true
+    }
+  }, [ruta])
 
   const llegadas = useMemo(() => {
-    if (!ruta || !ultimaPosicion) return null
-    return calcularLlegadasPorDistancia(ruta, ultimaPosicion)
-  }, [ruta, ultimaPosicion])
+    if (!geometria || !ultimaPosicion) return null
+    return calcularLlegadasPorDistancia(geometria, ultimaPosicion)
+  }, [geometria, ultimaPosicion])
 
   // Si el chofer cierra la app sin apagar el servicio, Firebase lo marca
   // como inactivo automáticamente al perder la conexión.
