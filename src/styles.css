@@ -546,6 +546,38 @@ a {
   margin-bottom: 12px;
 }
 
+.planner-form .field label {
+  font-size: 0.72rem;
+}
+
+.plan-resultado {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.plan-paso {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 4px;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.plan-paso-badge {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .stops-panel {
   background: #fff;
   border-top: 1px solid var(--line);
