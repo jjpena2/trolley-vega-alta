@@ -578,6 +578,19 @@ a {
   justify-content: center;
 }
 
+.plan-place-link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: 700;
+  color: var(--teal-700);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
 .stops-panel {
   background: #fff;
   border-top: 1px solid var(--line);
