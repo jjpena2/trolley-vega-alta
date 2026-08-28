@@ -115,7 +115,7 @@ export default function PassengerMap() {
     setParadaSeleccionada((actual) => (actual === codigo ? null : codigo))
   }
 
-  const [, setMapaListo] = useState(false)
+  const [mapaListo, setMapaListo] = useState(false)
 
   // ---- Crea el mapa una sola vez ----
   useEffect(() => {
@@ -175,7 +175,7 @@ export default function PassengerMap() {
       new maplibregl.LngLatBounds(coords[0], coords[0])
     )
     map.fitBounds(bounds, { padding: 48, duration: 600 })
-  }, [geometria, rutaMostrada])
+  }, [geometria, rutaMostrada, mapaListo])
 
   // ---- Marcadores de paradas ----
   useEffect(() => {
@@ -217,7 +217,7 @@ export default function PassengerMap() {
       marcadoresParadaRef.current.set(p.codigo, { marker, popup, lng: p.lng, lat: p.lat })
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [llegadas, paradaSeleccionada, rutaMostrada])
+  }, [llegadas, paradaSeleccionada, rutaMostrada, mapaListo])
 
   // ---- Centra el mapa y abre el popup al elegir una parada ----
   useEffect(() => {
@@ -231,7 +231,7 @@ export default function PassengerMap() {
       duration: 600,
     })
     entry.marker.togglePopup()
-  }, [paradaSeleccionada])
+  }, [paradaSeleccionada, mapaListo])
 
   // ---- Marcadores de trolleys en vivo ----
   useEffect(() => {
@@ -264,7 +264,7 @@ export default function PassengerMap() {
         marcadoresTrolleyRef.current.delete(uid)
       }
     })
-  }, [activos])
+  }, [activos, mapaListo])
 
   return (
     <div className="screen no-pad">
