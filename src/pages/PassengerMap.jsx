@@ -9,6 +9,9 @@ import {
   construirGeometriaAproximada,
   construirGeometriaReal,
   calcularLlegadasPorDistancia,
+  LUGARES,
+  planificarViaje,
+  obtenerCoordenadaParada,
 } from '../data/routesVegaBaja'
 
 // Centro aproximado del mapa (ajusta esto cuando tengas las coordenadas
@@ -83,16 +86,24 @@ function elEl(html) {
   return div.firstElementChild
 }
 
+const LUGARES_NOMBRES = [...new Set(LUGARES.map((l) => l.nombre))].sort((a, b) =>
+  a.localeCompare(b, 'es')
+)
+
 export default function PassengerMap() {
   const [choferes, setChoferes] = useState({})
   const [rutaSeleccionada, setRutaSeleccionada] = useState('todas')
   const [paradaSeleccionada, setParadaSeleccionada] = useState(null)
+  const [textoOrigen, setTextoOrigen] = useState('')
+  const [textoDestino, setTextoDestino] = useState('')
+  const [plan, setPlan] = useState(undefined)
 
   const mapDivRef = useRef(null)
   const mapRef = useRef(null)
   const mapListoRef = useRef(false)
   const marcadoresParadaRef = useRef(new Map())
   const marcadoresTrolleyRef = useRef(new Map())
+  const marcadoresPlanRef = useRef([])
 
   useEffect(() => {
     const choferesRef = ref(db, 'choferesActivos')
@@ -116,7 +127,9 @@ export default function PassengerMap() {
   )
 
   const modoTodas = rutaSeleccionada === 'todas'
-  const rutaMostrada = modoTodas ? null : obtenerRuta(rutaSeleccionada)
+  const modoPlanificar = rutaSeleccionada === 'planificar'
+  const rutaMostrada =
+    modoTodas || modoPlanificar ? null : obtenerRuta(rutaSeleccionada)
 
   const choferDeRutaMostrada = rutaMostrada
     ? activos.find((c) => c.ruta === rutaMostrada.id)
@@ -150,6 +163,12 @@ export default function PassengerMap() {
 
   function elegirParada(codigo) {
     setParadaSeleccionada((actual) => (actual === codigo ? null : codigo))
+  }
+
+  function buscarPlan() {
+    if (!textoOrigen.trim() || !textoDestino.trim()) return
+    const resultado = planificarViaje(textoOrigen, textoDestino)
+    setPlan(resultado)
   }
 
   const [mapaListo, setMapaListo] = useState(false)
@@ -213,7 +232,7 @@ export default function PassengerMap() {
     if (!map || !mapListoRef.current) return
     const fuenteUna = map.getSource('ruta-trazado')
     const fuenteTodas = map.getSource('todas-rutas')
-    if (modoTodas || !geometria) {
+    if (modoTodas || modoPlanificar || !geometria) {
       fuenteUna?.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [] } })
       return
     }
@@ -228,7 +247,7 @@ export default function PassengerMap() {
       new maplibregl.LngLatBounds(coords[0], coords[0])
     )
     map.fitBounds(bounds, { padding: 48, duration: 600 })
-  }, [geometria, rutaMostrada, modoTodas, mapaListo])
+  }, [geometria, rutaMostrada, modoTodas, modoPlanificar, mapaListo])
 
   // ---- Dibuja TODAS las rutas a la vez, cada una de su color ----
   useEffect(() => {
@@ -258,6 +277,77 @@ export default function PassengerMap() {
       map.fitBounds(bounds, { padding: 40, duration: 600 })
     }
   }, [modoTodas, geometriasTodas, mapaListo])
+
+  // ---- Dibuja el plan de viaje: rutas involucradas + pines de origen,
+  // transbordo y destino ----
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapListoRef.current) return
+
+    // limpia pines anteriores del plan
+    marcadoresPlanRef.current.forEach((m) => m.remove())
+    marcadoresPlanRef.current = []
+
+    if (!modoPlanificar) return
+
+    if (!plan || plan.error || plan?.tipo === 'mismo-lugar') {
+      map.getSource('todas-rutas')?.setData({ type: 'FeatureCollection', features: [] })
+      return
+    }
+
+    const rutasImplicadas = plan?.tipo === 'directo' ? [plan.ruta] : [plan.ruta1, plan.ruta2]
+    const features = rutasImplicadas.map((r) => {
+      const g = geometriasTodas[r.id] || construirGeometriaAproximada(r)
+      return {
+        type: 'Feature',
+        properties: { color: r.color, id: r.id },
+        geometry: {
+          type: 'LineString',
+          coordinates: (g.geometry || []).map(([lat, lng]) => [lng, lat]),
+        },
+      }
+    })
+    map.getSource('todas-rutas')?.setData({ type: 'FeatureCollection', features })
+
+    function ponerPin(coord, html, color) {
+      if (!coord) return
+      const el = elEl(`
+        <div style="
+          width:26px;height:26px;border-radius:50% 50% 50% 0;
+          background:${color};transform:rotate(-45deg);
+          box-shadow:0 3px 8px rgba(0,0,0,0.35);
+          display:flex;align-items:center;justify-content:center;
+          border:2px solid #fff;
+        "><span style="transform:rotate(45deg);font-size:13px;color:#fff;">${html}</span></div>
+      `)
+      const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
+        .setLngLat([coord[1], coord[0]])
+        .addTo(map)
+      marcadoresPlanRef.current.push(marker)
+      return coord
+    }
+
+    const puntos = []
+    if (plan?.tipo === 'directo') {
+      puntos.push(ponerPin(obtenerCoordenadaParada(plan.ruta.id, plan.origen.codigo), 'A', '#146c6e'))
+      puntos.push(ponerPin(obtenerCoordenadaParada(plan.ruta.id, plan.destino.codigo), 'B', '#e85d4e'))
+    } else {
+      puntos.push(ponerPin(obtenerCoordenadaParada(plan.ruta1.id, plan.origen.codigo), 'A', '#146c6e'))
+      puntos.push(
+        ponerPin(obtenerCoordenadaParada(plan.ruta1.id, plan.transbordo.codigo1), '⇄', '#17262a')
+      )
+      puntos.push(ponerPin(obtenerCoordenadaParada(plan.ruta2.id, plan.destino.codigo), 'B', '#e85d4e'))
+    }
+
+    const validos = puntos.filter(Boolean).map(([lat, lng]) => [lng, lat])
+    if (validos.length) {
+      const bounds = validos.reduce(
+        (b, c) => b.extend(c),
+        new maplibregl.LngLatBounds(validos[0], validos[0])
+      )
+      map.fitBounds(bounds, { padding: 60, duration: 600 })
+    }
+  }, [plan, modoPlanificar, geometriasTodas, mapaListo])
 
   // ---- Marcadores de paradas (solo en modo de una ruta) ----
   useEffect(() => {
@@ -376,6 +466,7 @@ export default function PassengerMap() {
           onChange={(e) => elegirRuta(e.target.value)}
         >
           <option value="todas">🗺️ Todas las rutas</option>
+          <option value="planificar">📍 Planificar viaje</option>
           {ROUTES.map((r) => (
             <option key={r.id} value={r.id}>
               {idsConServicio.has(r.id) ? '🟢 ' : ''}
@@ -388,6 +479,129 @@ export default function PassengerMap() {
       <div className="map-wrap">
         <div ref={mapDivRef} style={{ height: '100%', width: '100%' }} />
       </div>
+
+      {modoPlanificar && (
+        <div className="stops-panel">
+          <div className="stops-panel-header">Planificar viaje</div>
+
+          <div className="planner-form">
+            <div className="field" style={{ marginBottom: 10 }}>
+              <label htmlFor="origen">Desde</label>
+              <input
+                id="origen"
+                list="lugares-lista"
+                value={textoOrigen}
+                onChange={(e) => setTextoOrigen(e.target.value)}
+                placeholder="Ej. Escuela de Bellas Artes"
+              />
+            </div>
+            <div className="field" style={{ marginBottom: 10 }}>
+              <label htmlFor="destino">Hasta</label>
+              <input
+                id="destino"
+                list="lugares-lista"
+                value={textoDestino}
+                onChange={(e) => setTextoDestino(e.target.value)}
+                placeholder="Ej. Área Recreativa El Trece"
+              />
+            </div>
+            <datalist id="lugares-lista">
+              {LUGARES_NOMBRES.map((n) => (
+                <option key={n} value={n} />
+              ))}
+            </datalist>
+            <button className="btn-primary" onClick={buscarPlan}>
+              Buscar ruta
+            </button>
+          </div>
+
+          {plan !== undefined && (
+            <div className="plan-resultado">
+              {plan === null && (
+                <div className="no-service-banner">
+                  No encontramos una ruta directa ni con un transbordo entre
+                  esos dos puntos. Intenta con otras paradas.
+                </div>
+              )}
+
+              {plan?.error && (
+                <div className="no-service-banner">
+                  No encontramos esas paradas. Revisa que el nombre esté
+                  escrito igual que en la lista (elige una sugerencia).
+                </div>
+              )}
+
+              {plan?.tipo === 'mismo-lugar' && (
+                <div className="no-service-banner">
+                  El origen y el destino son el mismo lugar 🙂
+                </div>
+              )}
+
+              {plan?.tipo === 'directo' && (
+                <div className="plan-paso">
+                  <div className="plan-paso-badge" style={{ background: plan.ruta.color }}>
+                    1
+                  </div>
+                  <div>
+                    Toma la <b>{plan.ruta.nombre}</b> en <b>{plan.origen.nombre}</b> y
+                    bájate en <b>{plan.destino.nombre}</b>.
+                    <div className="hint" style={{ margin: '4px 0 0' }}>
+                      Viaje directo, sin transbordo — ~{plan.minutos} min según el
+                      itinerario publicado.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {plan?.tipo === 'transbordo' && (
+                <>
+                  <div className="plan-paso">
+                    <div className="plan-paso-badge" style={{ background: plan.ruta1.color }}>
+                      1
+                    </div>
+                    <div>
+                      Toma la <b>{plan.ruta1.nombre}</b> en <b>{plan.origen.nombre}</b> y
+                      bájate en <b>{plan.transbordo.nombre}</b>.
+                      <div className="hint" style={{ margin: '4px 0 0' }}>
+                        ~{plan.minutos1} min
+                      </div>
+                    </div>
+                  </div>
+                  <div className="plan-paso">
+                    <div className="plan-paso-badge" style={{ background: '#17262a' }}>
+                      ⇄
+                    </div>
+                    <div>
+                      Transborda en <b>{plan.transbordo.nombre}</b>.
+                    </div>
+                  </div>
+                  <div className="plan-paso">
+                    <div className="plan-paso-badge" style={{ background: plan.ruta2.color }}>
+                      2
+                    </div>
+                    <div>
+                      Toma la <b>{plan.ruta2.nombre}</b> hasta <b>{plan.destino.nombre}</b>.
+                      <div className="hint" style={{ margin: '4px 0 0' }}>
+                        ~{plan.minutos2} min
+                      </div>
+                    </div>
+                  </div>
+                  <p className="hint" style={{ padding: '8px 4px 0' }}>
+                    Viaje total aproximado: ~{plan.minutos} min con 1 transbordo,
+                    según el itinerario publicado.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+
+          <p className="hint" style={{ padding: '0 4px', marginTop: plan ? 12 : 0 }}>
+            Los tiempos se calculan con el itinerario oficial publicado (no
+            en vivo). Escribe el nombre tal como aparece en las paradas —
+            usa las sugerencias para no fallar la ortografía.
+          </p>
+        </div>
+      )}
 
       {modoTodas && (
         <div className="stops-panel">
