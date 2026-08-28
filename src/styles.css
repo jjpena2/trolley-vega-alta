@@ -255,49 +255,39 @@ a {
   box-shadow: var(--shadow-card);
 }
 
-.leaflet-container {
+.map-wrap .maplibregl-map {
   width: 100%;
   height: 100%;
   min-height: 60vh;
-  background: #eef1f3;
   font-family: var(--font-body);
 }
 
-/* Los tiles de OpenStreetMap son gratis y no requieren llave, pero se
-   ven "cargados" por defecto. Este filtro los suaviza (menos saturación,
-   más brillo/contraste) para un look más limpio y moderno, sin depender
-   de ningún servicio de mapas de pago. */
-.leaflet-tile-pane {
-  filter: saturate(0.75) brightness(1.08) contrast(0.95);
-}
-
 /* Controles de zoom estilo Google Maps/Waze: botones redondos flotantes */
-.leaflet-control-zoom {
+.maplibregl-ctrl-top-left .maplibregl-ctrl-group {
   border: none !important;
   box-shadow: 0 3px 10px rgba(11, 46, 48, 0.18) !important;
   border-radius: var(--radius-md) !important;
   overflow: hidden;
+  margin: 12px !important;
 }
 
-.leaflet-control-zoom a {
+.maplibregl-ctrl-group button {
   width: 38px !important;
   height: 38px !important;
-  line-height: 38px !important;
-  color: var(--ink-900) !important;
-  background: #fff !important;
 }
 
-.leaflet-control-zoom a:first-child {
-  border-bottom: 1px solid var(--line) !important;
-}
-
-.leaflet-popup-content-wrapper {
+.maplibregl-popup-content {
   border-radius: var(--radius-md) !important;
   box-shadow: var(--shadow-card) !important;
+  padding: 12px 14px !important;
 }
 
-.leaflet-popup-tip {
-  box-shadow: none !important;
+.maplibregl-popup-tip {
+  display: none;
+}
+
+.maplibregl-ctrl-attrib {
+  font-size: 0.65rem !important;
 }
 
 .map-legend {
