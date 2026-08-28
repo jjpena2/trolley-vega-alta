@@ -11,7 +11,6 @@ import {
   calcularLlegadasPorDistancia,
   RUTA_A_LUGARES,
   planificarViaje,
-  obtenerCoordenadaParada,
   segmentoEntreDistancias,
   distanciaDeParada,
 } from '../data/routesVegaBaja'
@@ -169,9 +168,20 @@ export default function PassengerMap() {
     setPlan(resultado)
   }
 
+  // Coordenadas de una parada usando la MISMA geometría que se dibuja
+  // en el mapa (real si ya se cargó, aproximada si no) — así el pin y
+  // la línea siempre coinciden exactamente.
+  function coordDeParadaEnRuta(routeId, codigo) {
+    const ruta = obtenerRuta(routeId)
+    if (!ruta) return null
+    const g = geometriasTodas[routeId] || construirGeometriaAproximada(ruta)
+    const p = g.paradas.find((x) => x.codigo === codigo)
+    return p ? [p.lat, p.lng] : null
+  }
+
   function zoomAParada(routeId, codigo) {
     const map = mapRef.current
-    const coord = obtenerCoordenadaParada(routeId, codigo)
+    const coord = coordDeParadaEnRuta(routeId, codigo)
     if (!map || !coord) return
     map.flyTo({ center: [coord[1], coord[0]], zoom: Math.max(map.getZoom(), 16), duration: 600 })
   }
@@ -360,14 +370,14 @@ export default function PassengerMap() {
 
     const puntos = []
     if (plan?.tipo === 'directo') {
-      puntos.push(ponerPin(obtenerCoordenadaParada(plan.ruta.id, plan.origen.codigo), 'A', '#146c6e'))
-      puntos.push(ponerPin(obtenerCoordenadaParada(plan.ruta.id, plan.destino.codigo), 'B', '#e85d4e'))
+      puntos.push(ponerPin(coordDeParadaEnRuta(plan.ruta.id, plan.origen.codigo), 'A', '#146c6e'))
+      puntos.push(ponerPin(coordDeParadaEnRuta(plan.ruta.id, plan.destino.codigo), 'B', '#e85d4e'))
     } else {
-      puntos.push(ponerPin(obtenerCoordenadaParada(plan.ruta1.id, plan.origen.codigo), 'A', '#146c6e'))
+      puntos.push(ponerPin(coordDeParadaEnRuta(plan.ruta1.id, plan.origen.codigo), 'A', '#146c6e'))
       puntos.push(
-        ponerPin(obtenerCoordenadaParada(plan.ruta1.id, plan.transbordo.codigo1), '⇄', '#17262a')
+        ponerPin(coordDeParadaEnRuta(plan.ruta1.id, plan.transbordo.codigo1), '⇄', '#17262a')
       )
-      puntos.push(ponerPin(obtenerCoordenadaParada(plan.ruta2.id, plan.destino.codigo), 'B', '#e85d4e'))
+      puntos.push(ponerPin(coordDeParadaEnRuta(plan.ruta2.id, plan.destino.codigo), 'B', '#e85d4e'))
     }
 
     const validos = puntos.filter(Boolean).map(([lat, lng]) => [lng, lat])
