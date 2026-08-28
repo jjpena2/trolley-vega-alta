@@ -395,6 +395,11 @@ a {
   color: #fff;
 }
 
+.big-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .stat-row {
   display: flex;
   gap: 12px;
@@ -671,3 +676,70 @@ a {
 .stop-row.next .stop-eta {
   color: var(--ink-900);
 }
+
+/* ===== Panel de administración: editor de paradas ===== */
+.parada-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.parada-editor-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 60px 1fr 1fr 1fr;
+  gap: 6px;
+}
+
+.parada-editor-grid input {
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  background: var(--cream-100);
+  color: var(--ink-900);
+  min-width: 0;
+}
+
+.parada-editor-acciones {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.parada-editor-acciones button {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--line);
+  background: #fff;
+  color: var(--ink-500);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.parada-editor-acciones button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.parada-editor-acciones button.quitar {
+  color: #a83226;
+  border-color: rgba(168, 50, 38, 0.3);
+}
+
+@media (max-width: 480px) {
+  .parada-editor-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .parada-editor-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .parada-editor-acciones {
+    justify-content: flex-end;
+  }
+}
+

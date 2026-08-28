@@ -4,6 +4,7 @@ import Login from './pages/Login'
 import Register from './pages/Register'
 import PassengerMap from './pages/PassengerMap'
 import DriverDashboard from './pages/DriverDashboard'
+import AdminDashboard from './pages/AdminDashboard'
 
 export default function App() {
   const { user, profile, loading, logout } = useAuth()
@@ -29,6 +30,10 @@ export default function App() {
             profile?.rol === 'chofer' ? (
               <PrivateRoute user={user}>
                 <DriverDashboard />
+              </PrivateRoute>
+            ) : profile?.rol === 'admin' ? (
+              <PrivateRoute user={user}>
+                <AdminDashboard />
               </PrivateRoute>
             ) : (
               <PassengerMap />
@@ -81,11 +86,13 @@ function PrivateRoute({ user, children }) {
 }
 
 function BottomNav({ rol }) {
+  const icono = rol === 'chofer' ? '🚦' : rol === 'admin' ? '🛠️' : '🗺️'
+  const etiqueta = rol === 'chofer' ? 'Mi servicio' : rol === 'admin' ? 'Administrar' : 'Mapa'
   return (
     <nav className="bottom-nav">
       <NavLink to="/" end className={({ isActive }) => (isActive ? 'active' : '')}>
-        <span className="nav-icon">{rol === 'chofer' ? '🚦' : '🗺️'}</span>
-        {rol === 'chofer' ? 'Mi servicio' : 'Mapa'}
+        <span className="nav-icon">{icono}</span>
+        {etiqueta}
       </NavLink>
     </nav>
   )
