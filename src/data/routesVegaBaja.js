@@ -258,6 +258,32 @@ export function buscarLugares(texto) {
   return LUGARES.filter((l) => l.nombre.toLowerCase().includes(q)).slice(0, 8)
 }
 
+// Para los <select> del planificador: la lista de lugares de cada ruta,
+// en su orden real, usando siempre el nombre "canónico" de LUGARES
+// (para que el valor elegido siempre haga match exacto al planificar).
+// Si una ruta pasa dos veces por el mismo lugar (p.ej. la terminal al
+// inicio y al final), solo aparece una vez en su lista.
+export const RUTA_A_LUGARES = (() => {
+  const nombreCanonico = new Map() // "routeId|codigo" -> nombre
+  LUGARES.forEach((lugar) => {
+    lugar.instancias.forEach((inst) => {
+      nombreCanonico.set(`${inst.routeId}|${inst.codigo}`, lugar.nombre)
+    })
+  })
+
+  return ROUTES.map((r) => {
+    const vistos = new Set()
+    const lugares = []
+    r.paradas.forEach((p) => {
+      const nombre = nombreCanonico.get(`${r.id}|${p.codigo}`) || p.nombre
+      if (vistos.has(nombre)) return
+      vistos.add(nombre)
+      lugares.push(nombre)
+    })
+    return { routeId: r.id, routeNombre: r.nombre, color: r.color, lugares }
+  })
+})()
+
 function lugarPorNombreExacto(texto) {
   const q = texto.trim().toLowerCase()
   return LUGARES.find((l) => l.nombre.toLowerCase() === q) || null
