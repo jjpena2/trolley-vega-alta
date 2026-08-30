@@ -73,7 +73,14 @@ export default function AdminDashboard() {
 
       {tab === 'choferes' && <PanelChoferes puebloId={puebloAdminId} />}
       {tab === 'rutas' && <PanelRutas puebloId={puebloAdminId} />}
-      {tab === 'pueblos' && esSuperadmin && <PanelPueblos />}
+      {tab === 'pueblos' && esSuperadmin && (
+        <PanelPueblos
+          onAdministrar={(id, destino) => {
+            setPuebloAdminId(id)
+            setTab(destino)
+          }}
+        />
+      )}
       {tab === 'usuarios' && esSuperadmin && <PanelUsuarios />}
     </div>
   )
@@ -284,11 +291,17 @@ function PanelRutas({ puebloId }) {
   const [editando, setEditando] = useState(null)
   const [publicando, setPublicando] = useState(false)
   const [importando, setImportando] = useState(false)
+  const [errorPublicar, setErrorPublicar] = useState('')
 
   async function onPublicarSemilla() {
+    setErrorPublicar('')
     setPublicando(true)
     try {
       await publicarSemilla()
+    } catch (e) {
+      setErrorPublicar(
+        'No se pudo publicar. Revisa que las reglas de Firebase te den permiso de escritura en este pueblo.'
+      )
     } finally {
       setPublicando(false)
     }
@@ -308,6 +321,7 @@ function PanelRutas({ puebloId }) {
             ahora. Publícalos aquí para empezar a editarlos, o crea tus
             rutas desde cero abajo.
           </p>
+          {errorPublicar && <div className="error-banner">{errorPublicar}</div>}
           <button className="btn-secondary" onClick={onPublicarSemilla} disabled={publicando}>
             {publicando ? 'Publicando…' : 'Publicar datos de ejemplo para editar'}
           </button>
@@ -519,7 +533,7 @@ function EditorRuta({ ruta, onCerrar, onGuardar }) {
 
 // ==================== PUEBLOS (solo superadmin) ====================
 
-function PanelPueblos() {
+function PanelPueblos({ onAdministrar }) {
   const { pueblos, crearPueblo, eliminarPueblo } = usePueblo()
   const [nombreNuevo, setNombreNuevo] = useState('')
   const [creando, setCreando] = useState(false)
@@ -533,8 +547,10 @@ function PanelPueblos() {
     }
     setCreando(true)
     try {
-      await crearPueblo(nombreNuevo.trim())
+      const id = await crearPueblo(nombreNuevo.trim())
       setNombreNuevo('')
+      // Lleva directo a configurar las rutas del pueblo recién creado.
+      onAdministrar?.(id, 'rutas')
     } catch {
       setError('No se pudo crear. Intenta de nuevo.')
     } finally {
@@ -563,25 +579,41 @@ function PanelPueblos() {
       {!pueblos.length && <p className="empty-state">Todavía no has creado ningún pueblo.</p>}
 
       {pueblos.map((p) => (
-        <div className="card" key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ flex: 1 }}>
-            <b>{p.nombre}</b>
+        <div className="card" key={p.id}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+            <b style={{ flex: 1 }}>{p.nombre}</b>
+            <button
+              className="link-btn"
+              style={{ color: '#a83226' }}
+              onClick={() => {
+                if (
+                  confirm(
+                    `¿Borrar "${p.nombre}"? Esto también borra sus rutas y choferes activos. No se puede deshacer.`
+                  )
+                ) {
+                  eliminarPueblo(p.id)
+                }
+              }}
+            >
+              Borrar
+            </button>
           </div>
-          <button
-            className="link-btn"
-            style={{ color: '#a83226' }}
-            onClick={() => {
-              if (
-                confirm(
-                  `¿Borrar "${p.nombre}"? Esto también borra sus rutas y choferes activos. No se puede deshacer.`
-                )
-              ) {
-                eliminarPueblo(p.id)
-              }
-            }}
-          >
-            Borrar
-          </button>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              className="btn-secondary"
+              style={{ flex: 1 }}
+              onClick={() => onAdministrar?.(p.id, 'rutas')}
+            >
+              🗺️ Rutas
+            </button>
+            <button
+              className="btn-secondary"
+              style={{ flex: 1 }}
+              onClick={() => onAdministrar?.(p.id, 'choferes')}
+            >
+              🚋 Choferes
+            </button>
+          </div>
         </div>
       ))}
     </div>
