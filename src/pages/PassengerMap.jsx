@@ -4,6 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { onValue, ref } from 'firebase/database'
 import { db } from '../firebase'
 import { useRoutes } from '../context/RoutesContext'
+import { usePueblo } from '../context/PuebloContext'
 import {
   calcularLlegadasPorDistancia,
   segmentoEntreDistancias,
@@ -89,6 +90,7 @@ function elEl(html) {
 
 export default function PassengerMap() {
   const { rutas, motor } = useRoutes()
+  const { puebloActivo, pueblos, setPuebloActivo } = usePueblo()
   const [choferes, setChoferes] = useState({})
   const [rutaSeleccionada, setRutaSeleccionada] = useState('todas')
   const [paradaSeleccionada, setParadaSeleccionada] = useState(null)
@@ -103,13 +105,24 @@ export default function PassengerMap() {
   const marcadoresTrolleyRef = useRef(new Map())
   const marcadoresPlanRef = useRef([])
 
+  // Al cambiar de pueblo, ninguna selección anterior sigue teniendo
+  // sentido (las rutas/paradas son de otro lugar).
   useEffect(() => {
-    const choferesRef = ref(db, 'choferesActivos')
+    setRutaSeleccionada('todas')
+    setParadaSeleccionada(null)
+    setPlan(undefined)
+    setTextoOrigen('')
+    setTextoDestino('')
+  }, [puebloActivo?.id])
+
+  useEffect(() => {
+    if (!puebloActivo?.id) return
+    const choferesRef = ref(db, `choferesActivos/${puebloActivo.id}`)
     const unsub = onValue(choferesRef, (snap) => {
       setChoferes(snap.exists() ? snap.val() : {})
     })
     return unsub
-  }, [])
+  }, [puebloActivo?.id])
 
   const activos = useMemo(
     () =>
@@ -501,6 +514,22 @@ export default function PassengerMap() {
 
   return (
     <div className="screen no-pad">
+      {pueblos.length > 1 && (
+        <div className="pueblo-select-wrap">
+          <select
+            className="pueblo-select"
+            value={puebloActivo?.id}
+            onChange={(e) => setPuebloActivo(e.target.value)}
+          >
+            {pueblos.map((p) => (
+              <option key={p.id} value={p.id}>
+                🚋 {p.nombre}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <div className="route-select-wrap">
         <select
           className="route-select"

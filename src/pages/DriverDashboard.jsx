@@ -2,19 +2,24 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ref, onDisconnect, update } from 'firebase/database'
 import { db } from '../firebase'
 import { useAuth } from '../context/AuthContext'
-import { useRoutes } from '../context/RoutesContext'
+import { useRoutesForPueblo } from '../context/RoutesContext'
 import { calcularLlegadasPorDistancia } from '../data/routesVegaBaja'
 
 export default function DriverDashboard() {
   const { user, profile } = useAuth()
-  const { motor } = useRoutes()
+  // Importante: usamos el motor del PROPIO pueblo del chofer (guardado
+  // en su perfil), no el pueblo que la app tenga seleccionado en ese
+  // momento — pueden ser distintos si antes navegó la app como pasajero
+  // viendo otro pueblo.
+  const { motor } = useRoutesForPueblo(profile?.puebloId)
   const [enServicio, setEnServicio] = useState(false)
   const [ultimaPosicion, setUltimaPosicion] = useState(null)
   const [precision, setPrecision] = useState(null)
   const [error, setError] = useState('')
   const watchIdRef = useRef(null)
 
-  const choferRef = ref(db, `choferesActivos/${user.uid}`)
+  const sinPueblo = !profile?.puebloId
+  const choferRef = ref(db, `choferesActivos/${profile?.puebloId}/${user.uid}`)
   const ruta = motor.obtenerRuta(profile?.ruta)
   const [geometria, setGeometria] = useState(null)
 
@@ -42,6 +47,7 @@ export default function DriverDashboard() {
   // Si el chofer cierra la app sin apagar el servicio, Firebase lo marca
   // como inactivo automáticamente al perder la conexión.
   useEffect(() => {
+    if (sinPueblo) return
     onDisconnect(choferRef).update({ activo: false })
     return () => {
       if (watchIdRef.current !== null) {
@@ -49,9 +55,13 @@ export default function DriverDashboard() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [sinPueblo])
 
   function iniciarServicio() {
+    if (sinPueblo) {
+      setError('Tu cuenta no tiene un pueblo asignado. Contacta al administrador.')
+      return
+    }
     if (profile?.habilitado === false) {
       setError('Tu cuenta de chofer está deshabilitada. Contacta al administrador.')
       return
@@ -116,6 +126,14 @@ export default function DriverDashboard() {
 
         {error && <div className="error-banner">{error}</div>}
 
+        {sinPueblo && (
+          <div className="error-banner">
+            Tu cuenta no tiene un pueblo/municipio asignado (probablemente
+            te registraste antes de esta función). Contacta al
+            administrador para que te lo asigne.
+          </div>
+        )}
+
         {profile?.habilitado === false && (
           <div className="error-banner">
             Tu cuenta de chofer está deshabilitada por el administrador. No
@@ -126,7 +144,7 @@ export default function DriverDashboard() {
         <button
           className={`big-toggle ${enServicio ? 'stop' : 'start'}`}
           onClick={enServicio ? detenerServicio : iniciarServicio}
-          disabled={!enServicio && profile?.habilitado === false}
+          disabled={!enServicio && (profile?.habilitado === false || sinPueblo)}
         >
           {enServicio ? 'Terminar servicio' : 'Comenzar servicio'}
         </button>

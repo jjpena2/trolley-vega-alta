@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { useRoutes } from '../context/RoutesContext'
+import { usePueblo } from '../context/PuebloContext'
+import { useRoutesForPueblo } from '../context/RoutesContext'
 
 export default function Register() {
   const { register } = useAuth()
-  const { rutas } = useRoutes()
+  const { pueblos, puebloActivo } = usePueblo()
   const navigate = useNavigate()
 
   const [rol, setRol] = useState('pasajero')
@@ -13,13 +14,22 @@ export default function Register() {
   const [correo, setCorreo] = useState('')
   const [contrasena, setContrasena] = useState('')
   const [telefono, setTelefono] = useState('')
+  const [puebloId, setPuebloId] = useState(puebloActivo?.id || '')
   const [rutaId, setRutaId] = useState('')
   const [error, setError] = useState('')
   const [cargando, setCargando] = useState(false)
 
+  const pueblosParaElegir = pueblos.length ? pueblos : [puebloActivo].filter(Boolean)
+  const { rutas } = useRoutesForPueblo(puebloId)
+
   useEffect(() => {
     if (!rutaId && rutas.length) setRutaId(rutas[0].id)
   }, [rutas, rutaId])
+
+  // Si cambia el pueblo elegido, la ruta anterior ya no aplica.
+  useEffect(() => {
+    setRutaId('')
+  }, [puebloId])
 
   async function onSubmit(e) {
     e.preventDefault()
@@ -39,6 +49,7 @@ export default function Register() {
         rol,
         telefono: telefono.trim(),
         ruta: rol === 'chofer' ? rutaId : '',
+        puebloId: rol === 'chofer' ? puebloId : '',
       })
       navigate('/')
     } catch (err) {
@@ -130,6 +141,21 @@ export default function Register() {
                   onChange={(e) => setTelefono(e.target.value)}
                   placeholder="787-000-0000"
                 />
+              </div>
+
+              <div className="field">
+                <label htmlFor="pueblo">Pueblo / municipio</label>
+                <select
+                  id="pueblo"
+                  value={puebloId}
+                  onChange={(e) => setPuebloId(e.target.value)}
+                >
+                  {pueblosParaElegir.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.nombre}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="field">
