@@ -1,5 +1,6 @@
 import { Link, Navigate, NavLink, Route, Routes } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
+import { usePueblo } from './context/PuebloContext'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import PassengerMap from './pages/PassengerMap'
@@ -21,7 +22,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <TopBar user={user} onSalir={logout} />
+      <TopBar user={user} profile={profile} onSalir={logout} />
 
       <Routes>
         <Route
@@ -31,7 +32,7 @@ export default function App() {
               <PrivateRoute user={user}>
                 <DriverDashboard />
               </PrivateRoute>
-            ) : profile?.rol === 'admin' ? (
+            ) : profile?.rol === 'admin' || profile?.rol === 'superadmin' ? (
               <PrivateRoute user={user}>
                 <AdminDashboard />
               </PrivateRoute>
@@ -56,14 +57,16 @@ export default function App() {
   )
 }
 
-function TopBar({ user, onSalir }) {
+function TopBar({ user, profile, onSalir }) {
+  const { puebloActivo } = usePueblo()
+  const mostrarPuebloEnTitulo = !user || profile?.rol === 'pasajero'
   return (
     <div className="topbar">
       <div className="mark" aria-hidden="true">
         <span style={{ fontSize: 18 }}>🚋</span>
       </div>
       <div>
-        <h1>Trolley Vega Alta</h1>
+        <h1>{mostrarPuebloEnTitulo ? puebloActivo?.nombre : 'Trolley App'}</h1>
         <p className="subtitle">Rastreo en vivo</p>
       </div>
       <div className="spacer" />
@@ -86,8 +89,9 @@ function PrivateRoute({ user, children }) {
 }
 
 function BottomNav({ rol }) {
-  const icono = rol === 'chofer' ? '🚦' : rol === 'admin' ? '🛠️' : '🗺️'
-  const etiqueta = rol === 'chofer' ? 'Mi servicio' : rol === 'admin' ? 'Administrar' : 'Mapa'
+  const esAdmin = rol === 'admin' || rol === 'superadmin'
+  const icono = rol === 'chofer' ? '🚦' : esAdmin ? '🛠️' : '🗺️'
+  const etiqueta = rol === 'chofer' ? 'Mi servicio' : esAdmin ? 'Administrar' : 'Mapa'
   return (
     <nav className="bottom-nav">
       <NavLink to="/" end className={({ isActive }) => (isActive ? 'active' : '')}>

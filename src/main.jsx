@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App.jsx'
 import { AuthProvider } from './context/AuthContext.jsx'
+import { PuebloProvider } from './context/PuebloContext.jsx'
 import { RoutesProvider } from './context/RoutesContext.jsx'
 import './styles.css'
 
@@ -10,9 +11,11 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter basename={import.meta.env.BASE_URL}>
       <AuthProvider>
-        <RoutesProvider>
-          <App />
-        </RoutesProvider>
+        <PuebloProvider>
+          <RoutesProvider>
+            <App />
+          </RoutesProvider>
+        </PuebloProvider>
       </AuthProvider>
     </BrowserRouter>
   </React.StrictMode>
