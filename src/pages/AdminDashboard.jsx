@@ -125,6 +125,17 @@ function PanelChoferes({ puebloId }) {
       .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '', 'es'))
   }, [usuarios, puebloId])
 
+  // Cualquier cuenta que todavía no sea chofer de ESTE pueblo (puede
+  // ser un pasajero, un chofer de otro pueblo, etc.) — para asignarla
+  // sin crear una cuenta nueva.
+  const usuariosDisponibles = useMemo(() => {
+    if (!usuarios) return []
+    return Object.entries(usuarios)
+      .map(([uid, u]) => ({ uid, ...u }))
+      .filter((u) => !(u.rol === 'chofer' && u.puebloId === puebloId))
+      .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '', 'es'))
+  }, [usuarios, puebloId])
+
   async function guardarCambios(uid, cambios) {
     await update(ref(db, `usuarios/${uid}`), cambios)
   }
@@ -143,11 +154,28 @@ function PanelChoferes({ puebloId }) {
     })
   }
 
+  async function asignarChoferExistente({ uid, telefono, rutaId }) {
+    await update(ref(db, `usuarios/${uid}`), {
+      rol: 'chofer',
+      puebloId,
+      ruta: rutaId,
+      telefono,
+      habilitado: true,
+    })
+  }
+
   if (error) return <div className="error-banner">{error}</div>
 
   return (
     <div>
-      <FormularioNuevoChofer rutas={rutas} onCrear={crearChofer} />
+      <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+        <FormularioNuevoChofer rutas={rutas} onCrear={crearChofer} />
+        <FormularioAsignarExistente
+          usuariosDisponibles={usuariosDisponibles}
+          rutas={rutas}
+          onAsignar={asignarChoferExistente}
+        />
+      </div>
 
       {usuarios === null && <p className="empty-state">Cargando choferes…</p>}
       {usuarios !== null && !choferes.length && (
@@ -200,14 +228,14 @@ function FormularioNuevoChofer({ rutas, onCrear }) {
 
   if (!abierto) {
     return (
-      <button className="btn-primary" style={{ marginBottom: 16 }} onClick={() => setAbierto(true)}>
+      <button className="btn-primary" style={{ flex: 1 }} onClick={() => setAbierto(true)}>
         + Agregar chofer
       </button>
     )
   }
 
   return (
-    <div className="card">
+    <div className="card" style={{ flex: '1 1 100%' }}>
       <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>Nuevo chofer</h2>
       {error && <div className="error-banner">{error}</div>}
       <div className="field">
@@ -265,6 +293,109 @@ function mensajeErrorCuenta(code) {
     default:
       return 'No se pudo crear la cuenta. Intenta de nuevo.'
   }
+}
+
+// Convierte una cuenta que YA EXISTE (un pasajero, un chofer de otro
+// pueblo, etc.) en chofer de este pueblo, sin crear una cuenta nueva.
+function FormularioAsignarExistente({ usuariosDisponibles, rutas, onAsignar }) {
+  const [abierto, setAbierto] = useState(false)
+  const [uidElegido, setUidElegido] = useState('')
+  const [telefono, setTelefono] = useState('')
+  const [rutaId, setRutaId] = useState('')
+  const [asignando, setAsignando] = useState(false)
+  const [error, setError] = useState('')
+
+  const elegido = usuariosDisponibles.find((u) => u.uid === uidElegido)
+
+  function elegirUsuario(uid) {
+    setUidElegido(uid)
+    const u = usuariosDisponibles.find((x) => x.uid === uid)
+    setTelefono(u?.telefono || '')
+  }
+
+  async function confirmar() {
+    setError('')
+    if (!uidElegido) {
+      setError('Elige una cuenta de la lista.')
+      return
+    }
+    if (!telefono.trim()) {
+      setError('Ingresa un teléfono de contacto.')
+      return
+    }
+    setAsignando(true)
+    try {
+      await onAsignar({ uid: uidElegido, telefono: telefono.trim(), rutaId })
+      setUidElegido('')
+      setTelefono('')
+      setRutaId('')
+      setAbierto(false)
+    } catch {
+      setError('No se pudo asignar. Intenta de nuevo.')
+    } finally {
+      setAsignando(false)
+    }
+  }
+
+  if (!abierto) {
+    return (
+      <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setAbierto(true)}>
+        Asignar chofer existente
+      </button>
+    )
+  }
+
+  return (
+    <div className="card" style={{ flex: '1 1 100%' }}>
+      <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>Asignar cuenta existente</h2>
+      <p className="hint" style={{ marginTop: 0 }}>
+        Convierte una cuenta que ya existe (por ejemplo, alguien
+        registrado como pasajero) en chofer de este pueblo.
+      </p>
+      {error && <div className="error-banner">{error}</div>}
+
+      <div className="field">
+        <label>Cuenta</label>
+        <select value={uidElegido} onChange={(e) => elegirUsuario(e.target.value)}>
+          <option value="">Selecciona una cuenta…</option>
+          {usuariosDisponibles.map((u) => (
+            <option key={u.uid} value={u.uid}>
+              {u.nombre || '(sin nombre)'} — {u.correo} ({u.rol || 'pasajero'})
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {elegido && (
+        <>
+          <div className="field">
+            <label>Teléfono</label>
+            <input value={telefono} onChange={(e) => setTelefono(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Ruta asignada</label>
+            <select value={rutaId} onChange={(e) => setRutaId(e.target.value)}>
+              <option value="">Sin asignar</option>
+              {rutas.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
+        </>
+      )}
+
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setAbierto(false)}>
+          Cancelar
+        </button>
+        <button className="btn-primary" style={{ flex: 1 }} onClick={confirmar} disabled={asignando}>
+          {asignando ? 'Asignando…' : 'Asignar como chofer'}
+        </button>
+      </div>
+    </div>
+  )
 }
 
 function FilaChofer({ chofer, rutas, onGuardar }) {
