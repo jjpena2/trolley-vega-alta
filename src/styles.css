@@ -873,3 +873,10 @@ a {
   font-size: 0.82rem;
   color: var(--ink-500);
 }
+
+.anuncio-accion {
+  font-size: 0.72rem;
+  color: var(--teal-700);
+  font-weight: 700;
+  margin-top: 2px;
+}
