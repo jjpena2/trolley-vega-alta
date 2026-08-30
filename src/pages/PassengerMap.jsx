@@ -91,56 +91,6 @@ function elEl(html) {
   return div.firstElementChild
 }
 
-// Escapa comillas para meter texto dentro de un atributo HTML onclick="..."
-function escaparParaAtributo(texto) {
-  return String(texto || '').replace(/'/g, '&#39;').replace(/"/g, '&quot;')
-}
-
-// HTML de TODOS los anuncios activos de una parada, para usar dentro de
-// un popup del mapa. Si un anuncio tiene coordenadas propias, tocarlo
-// centra el mapa ahí (usando la función global que se registra más
-// abajo en el componente).
-function htmlAnuncios(lista) {
-  if (!lista.length) return ''
-  return lista
-    .map((b) => {
-      const contenido = `
-        <b>${b.titulo}</b>
-        ${b.descripcion ? `<br/><span style="font-size:0.85em;">${b.descripcion}</span>` : ''}
-      `
-      const tieneMapa = b.lat != null && b.lng != null
-      const accionOnClick = tieneMapa
-        ? `onclick="window.__verAnuncioEnMapa && window.__verAnuncioEnMapa(${b.lat},${b.lng},'${escaparParaAtributo(b.titulo)}')"`
-        : ''
-      const cursor = tieneMapa ? 'cursor:pointer;' : ''
-      const pieMapa = tieneMapa
-        ? `<div style="font-size:0.7em;color:#146c6e;margin-top:2px;">📍 Toca para ver en el mapa</div>`
-        : ''
-      const pieEnlace = b.enlace
-        ? `<a href="${b.enlace}" target="_blank" rel="noopener noreferrer" style="font-size:0.7em;color:#146c6e;text-decoration:underline;">Más información ↗</a>`
-        : ''
-      return `
-        <div style="
-          margin-top:8px;padding-top:8px;border-top:1px dashed #ccc;
-          display:flex;gap:8px;align-items:center;${cursor}
-        " ${accionOnClick}>
-          ${
-            b.imagenUrl
-              ? `<img src="${b.imagenUrl}" style="width:36px;height:36px;border-radius:8px;object-fit:cover;flex-shrink:0;" />`
-              : `<span style="font-size:1.2em;">📢</span>`
-          }
-          <div>
-            <span style="font-size:0.65em;color:#999;text-transform:uppercase;">Anuncio</span><br/>
-            ${contenido}
-            ${pieMapa}
-            ${pieEnlace}
-          </div>
-        </div>
-      `
-    })
-    .join('')
-}
-
 export default function PassengerMap() {
   const { rutas, motor, cargando: cargandoRutas } = useRoutes()
   const { puebloActivo, pueblos, setPuebloActivo } = usePueblo()
@@ -237,6 +187,24 @@ export default function PassengerMap() {
       .filter((b) => b.activo !== false)
   }, [paradaSeleccionada, rutaMostrada, listaParadas, banners])
 
+  // Los anuncios de una parada rotan de uno en uno, cada 5 segundos,
+  // en el mismo recuadro (si hay más de uno).
+  const [indiceAnuncio, setIndiceAnuncio] = useState(0)
+
+  useEffect(() => {
+    setIndiceAnuncio(0)
+  }, [paradaSeleccionada])
+
+  useEffect(() => {
+    if (bannersSeleccionados.length <= 1) return
+    const id = setInterval(() => {
+      setIndiceAnuncio((i) => (i + 1) % bannersSeleccionados.length)
+    }, 5000)
+    return () => clearInterval(id)
+  }, [bannersSeleccionados.length])
+
+  const anuncioActual = bannersSeleccionados[indiceAnuncio] || null
+
   function elegirRuta(id) {
     setRutaSeleccionada(id)
     setParadaSeleccionada(null)
@@ -268,14 +236,6 @@ export default function PassengerMap() {
     const coord = coordDeParadaEnRuta(routeId, codigo)
     if (!map || !coord) return
     map.flyTo({ center: [coord[1], coord[0]], zoom: Math.max(map.getZoom(), 16), duration: 600 })
-  }
-
-  function verAnuncioEnMapa(banner) {
-    if (banner.lat != null && banner.lng != null && window.__verAnuncioEnMapa) {
-      window.__verAnuncioEnMapa(banner.lat, banner.lng, banner.titulo)
-    } else if (banner.enlace) {
-      window.open(banner.enlace, '_blank', 'noopener,noreferrer')
-    }
   }
 
   const [mapaListo, setMapaListo] = useState(false)
@@ -339,34 +299,53 @@ export default function PassengerMap() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ---- Función global para que los anuncios (HTML puro dentro de un
-  // popup del mapa) puedan pedirle al mapa que se centre en su
-  // ubicación al tocarlos. ----
+  // ---- Pin del anuncio actual (el que se ve en el carrusel de abajo).
+  // Se actualiza solo, y si el anuncio tiene enlace externo, tocar el
+  // pin te lleva directo ahí. ----
   useEffect(() => {
-    window.__verAnuncioEnMapa = (lat, lng, titulo) => {
-      const map = mapRef.current
-      if (!map) return
-      map.flyTo({ center: [lng, lat], zoom: 17, duration: 700 })
-      if (marcadorAnuncioRef.current) marcadorAnuncioRef.current.remove()
-      const el = elEl(`
-        <div style="
-          width:22px;height:22px;border-radius:50% 50% 50% 0;
-          background:#f2a93b;transform:rotate(-45deg);
-          box-shadow:0 3px 8px rgba(0,0,0,0.35);border:2px solid #fff;
-          display:flex;align-items:center;justify-content:center;
-        "><span style="transform:rotate(45deg);font-size:11px;">📢</span></div>
-      `)
-      const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
-        .setLngLat([lng, lat])
-        .setPopup(new maplibregl.Popup({ offset: 14 }).setText(titulo))
-        .addTo(map)
-      marker.togglePopup()
-      marcadorAnuncioRef.current = marker
+    const map = mapRef.current
+    if (!map || !mapaListo) return
+
+    if (marcadorAnuncioRef.current) {
+      marcadorAnuncioRef.current.remove()
+      marcadorAnuncioRef.current = null
     }
-    return () => {
-      delete window.__verAnuncioEnMapa
+
+    if (!anuncioActual || anuncioActual.lat == null || anuncioActual.lng == null) return
+
+    const tieneEnlace = !!anuncioActual.enlace
+    const el = elEl(`
+      <div style="
+        width:26px;height:26px;border-radius:50% 50% 50% 0;
+        background:#f2a93b;transform:rotate(-45deg);
+        box-shadow:0 3px 8px rgba(0,0,0,0.35);border:2px solid #fff;
+        display:flex;align-items:center;justify-content:center;
+        ${tieneEnlace ? 'cursor:pointer;' : ''}
+      "><span style="transform:rotate(45deg);font-size:13px;">📢</span></div>
+    `)
+    if (tieneEnlace) {
+      el.addEventListener('click', () => {
+        window.open(anuncioActual.enlace, '_blank', 'noopener,noreferrer')
+      })
     }
-  }, [])
+    const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
+      .setLngLat([anuncioActual.lng, anuncioActual.lat])
+      .addTo(map)
+    marcadorAnuncioRef.current = marker
+  }, [anuncioActual, mapaListo])
+
+  // ---- Al elegir una parada nueva, si su primer anuncio tiene
+  // coordenadas, centra el mapa ahí una sola vez (no en cada rotación
+  // del carrusel, para no marear moviendo el mapa cada 5 segundos). ----
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapaListo) return
+    const primero = bannersSeleccionados[0]
+    if (primero && primero.lat != null && primero.lng != null) {
+      map.flyTo({ center: [primero.lng, primero.lat], zoom: 16, duration: 700 })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paradaSeleccionada, mapaListo])
 
   // ---- Recentra el mapa cuando cambia el pueblo activo (o cuando el
   // mapa recién termina de cargar) ----
@@ -544,32 +523,20 @@ export default function PassengerMap() {
       const esSeleccionada = p.codigo === paradaSeleccionada
       const esProxima = p.codigo === proximaCodigo
       const esConexion = p.conexiones && p.conexiones.length > 0
-      const clave = claveParada(rutaMostrada.id, p)
-      const bannersDeParada = Object.entries(banners[clave] || {})
-        .map(([bannerId, b]) => ({ bannerId, ...b }))
-        .filter((b) => b.activo !== false)
-      const tieneAnuncio = bannersDeParada.length > 0
       const base = esSeleccionada ? 20 : esProxima ? 16 : esConexion ? 15 : 10
       const forma = esConexion ? '30%' : '50%'
       const relleno = esProxima || esSeleccionada ? rutaMostrada.color : '#fff'
       const colorIcono = esProxima || esSeleccionada ? '#fff' : rutaMostrada.color
       const el = elEl(`
-        <div style="position:relative;">
-          <div style="
-            width:${base}px;height:${base}px;border-radius:${forma};
-            background:${relleno};
-            border:${esSeleccionada ? 3 : 2}px solid ${esSeleccionada ? '#17262a' : rutaMostrada.color};
-            box-shadow:0 2px 6px rgba(0,0,0,0.3);cursor:pointer;
-            display:flex;align-items:center;justify-content:center;
-            font-size:${Math.round(base * 0.62)}px;line-height:1;color:${colorIcono};
-            transform:${esConexion ? 'rotate(45deg)' : 'none'};
-          ">${esConexion ? `<span style="transform:rotate(-45deg)">⇄</span>` : ''}</div>
-          ${
-            tieneAnuncio
-              ? `<div style="position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:50%;background:#f2a93b;border:2px solid #fff;font-size:8px;display:flex;align-items:center;justify-content:center;">📢</div>`
-              : ''
-          }
-        </div>
+        <div style="
+          width:${base}px;height:${base}px;border-radius:${forma};
+          background:${relleno};
+          border:${esSeleccionada ? 3 : 2}px solid ${esSeleccionada ? '#17262a' : rutaMostrada.color};
+          box-shadow:0 2px 6px rgba(0,0,0,0.3);cursor:pointer;
+          display:flex;align-items:center;justify-content:center;
+          font-size:${Math.round(base * 0.62)}px;line-height:1;color:${colorIcono};
+          transform:${esConexion ? 'rotate(45deg)' : 'none'};
+        ">${esConexion ? `<span style="transform:rotate(-45deg)">⇄</span>` : ''}</div>
       `)
       el.addEventListener('click', () => elegirParada(p.codigo))
 
@@ -586,14 +553,11 @@ export default function PassengerMap() {
           ? `~${p.minutos} min (próxima vuelta)`
           : `~${p.minutos} min`
 
-      const anuncioHtml = htmlAnuncios(bannersDeParada)
-
       const popup = new maplibregl.Popup({ offset: 12, closeButton: true }).setHTML(`
         <div class="popup-card">
           <b>${p.nombre}</b><br/>
           ${etaHtml}
           ${conexionesHtml}
-          ${anuncioHtml}
         </div>
       `)
 
@@ -605,7 +569,7 @@ export default function PassengerMap() {
       marcadoresParadaRef.current.set(p.codigo, { marker, popup, lng: p.lng, lat: p.lat })
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [listaParadas, proximaCodigo, paradaSeleccionada, rutaMostrada, banners, modoTodas, mapaListo])
+  }, [listaParadas, proximaCodigo, paradaSeleccionada, rutaMostrada, modoTodas, mapaListo])
 
   // ---- Centra el mapa y abre el popup al elegir una parada ----
   useEffect(() => {
@@ -936,30 +900,32 @@ export default function PassengerMap() {
             </p>
           )}
 
-          {bannersSeleccionados.map((b) => (
-            <div
-              key={b.bannerId}
-              className="anuncio-card"
-              onClick={() => verAnuncioEnMapa(b)}
-              role="button"
-              tabIndex={0}
-              style={{ cursor: b.lat != null || b.enlace ? 'pointer' : 'default' }}
-            >
-              {b.imagenUrl ? (
-                <img src={b.imagenUrl} alt="" className="anuncio-imagen" />
+          {anuncioActual && (
+            <div className="anuncio-card">
+              {anuncioActual.imagenUrl ? (
+                <img src={anuncioActual.imagenUrl} alt="" className="anuncio-imagen" />
               ) : (
                 <span className="anuncio-icono">📢</span>
               )}
-              <div>
-                <span className="anuncio-etiqueta">Anuncio · {b.nombreParada}</span>
-                <div className="anuncio-titulo">{b.titulo}</div>
-                {b.descripcion && <div className="anuncio-descripcion">{b.descripcion}</div>}
-                {b.lat != null && (
-                  <div className="anuncio-accion">📍 Toca para ver en el mapa</div>
+              <div style={{ flex: 1 }}>
+                <span className="anuncio-etiqueta">Anuncio · {anuncioActual.nombreParada}</span>
+                <div className="anuncio-titulo">{anuncioActual.titulo}</div>
+                {anuncioActual.descripcion && (
+                  <div className="anuncio-descripcion">{anuncioActual.descripcion}</div>
+                )}
+                {anuncioActual.lat != null && (
+                  <div className="anuncio-accion">📍 Toca el pin del mapa para más info</div>
                 )}
               </div>
+              {bannersSeleccionados.length > 1 && (
+                <div className="anuncio-puntos">
+                  {bannersSeleccionados.map((b, i) => (
+                    <span key={b.bannerId} className={i === indiceAnuncio ? 'punto activo' : 'punto'} />
+                  ))}
+                </div>
+              )}
             </div>
-          ))}
+          )}
 
           <div className="stops-list">
             {listaParadas.map((p) => (
