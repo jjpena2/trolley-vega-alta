@@ -54,9 +54,14 @@ export function PuebloProvider({ children }) {
     }
   }
 
-  async function crearPueblo(nombre) {
+  async function crearPueblo(nombre, lat, lng) {
     const id = slugificar(nombre) || `pueblo-${Date.now()}`
-    await set(ref(db, `pueblos/${id}`), { id, nombre: nombre.trim(), creado: Date.now() })
+    const datos = { id, nombre: nombre.trim(), creado: Date.now() }
+    if (lat != null && lng != null && lat !== '' && lng !== '') {
+      datos.lat = Number(lat)
+      datos.lng = Number(lng)
+    }
+    await set(ref(db, `pueblos/${id}`), datos)
     return id
   }
 

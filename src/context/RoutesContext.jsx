@@ -50,13 +50,14 @@ export function useRoutesForPueblo(puebloId) {
     return unsub
   }, [puebloId])
 
-  // Mientras ese pueblo no tenga rutas propias publicadas, se muestran
-  // los datos de ejemplo de Vega Baja como punto de partida.
+  // 'rutas' representa SIEMPRE los datos reales de este pueblo (vacío
+  // si todavía no tiene ninguna) — nunca se rellena en silencio con el
+  // ejemplo de Vega Baja, porque eso hacía que un pueblo nuevo se viera
+  // idéntico a Vega Baja y confundía a los pasajeros. El ejemplo solo
+  // se usa cuando el admin lo pide explícitamente (botón "Importar
+  // datos de ejemplo").
   const usandoSemilla = rutasFirebase !== null && rutasFirebase.length === 0
-  const rutas = useMemo(() => {
-    if (rutasFirebase && rutasFirebase.length) return rutasFirebase
-    return RUTAS_SEMILLA
-  }, [rutasFirebase])
+  const rutas = useMemo(() => rutasFirebase || [], [rutasFirebase])
 
   const motor = useMemo(() => crearMotorRutas(rutas), [rutas])
 
