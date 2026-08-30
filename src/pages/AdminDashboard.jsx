@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ref, onValue, update } from 'firebase/database'
-import { db } from '../firebase'
+import { ref, onValue, update, set } from 'firebase/database'
+import { db, crearCuentaSinPerderSesion } from '../firebase'
 import { useAuth } from '../context/AuthContext'
 import { usePueblo } from '../context/PuebloContext'
 import { useRoutesForPueblo, useRutasHuerfanas } from '../context/RoutesContext'
@@ -60,6 +60,13 @@ export default function AdminDashboard() {
         <button type="button" className={tab === 'rutas' ? 'active' : ''} onClick={() => setTab('rutas')}>
           Rutas
         </button>
+        <button
+          type="button"
+          className={tab === 'administradores' ? 'active' : ''}
+          onClick={() => setTab('administradores')}
+        >
+          Administradores
+        </button>
         {esSuperadmin && (
           <>
             <button type="button" className={tab === 'pueblos' ? 'active' : ''} onClick={() => setTab('pueblos')}>
@@ -74,6 +81,9 @@ export default function AdminDashboard() {
 
       {tab === 'choferes' && <PanelChoferes puebloId={puebloAdminId} />}
       {tab === 'rutas' && <PanelRutas puebloId={puebloAdminId} />}
+      {tab === 'administradores' && (
+        <PanelAdministradoresDePueblo puebloId={puebloAdminId} puebloNombre={pueblosAdministrables.find((p) => p.id === puebloAdminId)?.nombre} />
+      )}
       {tab === 'pueblos' && esSuperadmin && (
         <PanelPueblos
           onAdministrar={(id, destino) => {
@@ -119,18 +129,142 @@ function PanelChoferes({ puebloId }) {
     await update(ref(db, `usuarios/${uid}`), cambios)
   }
 
+  async function crearChofer({ nombre, correo, contrasena, telefono, rutaId }) {
+    const uid = await crearCuentaSinPerderSesion(correo, contrasena)
+    await set(ref(db, `usuarios/${uid}`), {
+      nombre,
+      correo,
+      rol: 'chofer',
+      telefono,
+      ruta: rutaId,
+      puebloId,
+      habilitado: true,
+      creado: Date.now(),
+    })
+  }
+
   if (error) return <div className="error-banner">{error}</div>
-  if (usuarios === null) return <p className="empty-state">Cargando choferes…</p>
-  if (!choferes.length)
-    return <p className="empty-state">Todavía no hay choferes registrados en este pueblo.</p>
 
   return (
     <div>
+      <FormularioNuevoChofer rutas={rutas} onCrear={crearChofer} />
+
+      {usuarios === null && <p className="empty-state">Cargando choferes…</p>}
+      {usuarios !== null && !choferes.length && (
+        <p className="empty-state">Todavía no hay choferes registrados en este pueblo.</p>
+      )}
       {choferes.map((c) => (
         <FilaChofer key={c.uid} chofer={c} rutas={rutas} onGuardar={guardarCambios} />
       ))}
     </div>
   )
+}
+
+function FormularioNuevoChofer({ rutas, onCrear }) {
+  const [abierto, setAbierto] = useState(false)
+  const [nombre, setNombre] = useState('')
+  const [correo, setCorreo] = useState('')
+  const [contrasena, setContrasena] = useState('')
+  const [telefono, setTelefono] = useState('')
+  const [rutaId, setRutaId] = useState('')
+  const [creando, setCreando] = useState(false)
+  const [error, setError] = useState('')
+
+  async function confirmar() {
+    setError('')
+    if (!nombre.trim() || !correo.trim() || contrasena.length < 6 || !telefono.trim()) {
+      setError('Completa nombre, correo, teléfono, y una contraseña de al menos 6 caracteres.')
+      return
+    }
+    setCreando(true)
+    try {
+      await onCrear({
+        nombre: nombre.trim(),
+        correo: correo.trim(),
+        contrasena,
+        telefono: telefono.trim(),
+        rutaId,
+      })
+      setNombre('')
+      setCorreo('')
+      setContrasena('')
+      setTelefono('')
+      setRutaId('')
+      setAbierto(false)
+    } catch (e) {
+      setError(mensajeErrorCuenta(e.code))
+    } finally {
+      setCreando(false)
+    }
+  }
+
+  if (!abierto) {
+    return (
+      <button className="btn-primary" style={{ marginBottom: 16 }} onClick={() => setAbierto(true)}>
+        + Agregar chofer
+      </button>
+    )
+  }
+
+  return (
+    <div className="card">
+      <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>Nuevo chofer</h2>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="field">
+        <label>Nombre</label>
+        <input value={nombre} onChange={(e) => setNombre(e.target.value)} />
+      </div>
+      <div className="field">
+        <label>Correo electrónico</label>
+        <input type="email" value={correo} onChange={(e) => setCorreo(e.target.value)} />
+      </div>
+      <div className="field">
+        <label>Contraseña inicial</label>
+        <input
+          type="text"
+          value={contrasena}
+          onChange={(e) => setContrasena(e.target.value)}
+          placeholder="Mínimo 6 caracteres — compártela con el chofer"
+        />
+      </div>
+      <div className="field">
+        <label>Teléfono</label>
+        <input value={telefono} onChange={(e) => setTelefono(e.target.value)} />
+      </div>
+      <div className="field">
+        <label>Ruta asignada</label>
+        <select value={rutaId} onChange={(e) => setRutaId(e.target.value)}>
+          <option value="">Sin asignar</option>
+          {rutas.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.nombre}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setAbierto(false)}>
+          Cancelar
+        </button>
+        <button className="btn-primary" style={{ flex: 1 }} onClick={confirmar} disabled={creando}>
+          {creando ? 'Creando…' : 'Crear chofer'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function mensajeErrorCuenta(code) {
+  switch (code) {
+    case 'auth/email-already-in-use':
+      return 'Ya existe una cuenta con ese correo.'
+    case 'auth/weak-password':
+      return 'La contraseña debe tener al menos 6 caracteres.'
+    case 'auth/invalid-email':
+      return 'El correo electrónico no es válido.'
+    default:
+      return 'No se pudo crear la cuenta. Intenta de nuevo.'
+  }
 }
 
 function FilaChofer({ chofer, rutas, onGuardar }) {
@@ -192,6 +326,166 @@ function FilaChofer({ chofer, rutas, onGuardar }) {
       <button className="btn-primary" onClick={guardar} disabled={guardando || !hayCambios}>
         {guardando ? 'Guardando…' : guardado ? 'Guardado ✓' : 'Guardar cambios'}
       </button>
+    </div>
+  )
+}
+
+// ==================== ADMINISTRADORES POR PUEBLO ====================
+// Disponible para cualquiera que esté administrando el pueblo (no solo
+// superadmin), para que cada pueblo pueda designar sus propios
+// co-administradores sin depender de pedírselo al superadministrador.
+
+function PanelAdministradoresDePueblo({ puebloId, puebloNombre }) {
+  const [usuarios, setUsuarios] = useState(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const usuariosRef = ref(db, 'usuarios')
+    const unsub = onValue(
+      usuariosRef,
+      (snap) => setUsuarios(snap.exists() ? snap.val() : {}),
+      () => setError('No se pudo leer la lista de administradores.')
+    )
+    return unsub
+  }, [])
+
+  const administradores = useMemo(() => {
+    if (!usuarios) return []
+    return Object.entries(usuarios)
+      .map(([uid, u]) => ({ uid, ...u }))
+      .filter(
+        (u) =>
+          u.rol === 'superadmin' || (u.rol === 'admin' && u.pueblosAdmin?.[puebloId])
+      )
+      .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '', 'es'))
+  }, [usuarios, puebloId])
+
+  async function crearAdmin({ nombre, correo, contrasena }) {
+    const uid = await crearCuentaSinPerderSesion(correo, contrasena)
+    await set(ref(db, `usuarios/${uid}`), {
+      nombre,
+      correo,
+      rol: 'admin',
+      pueblosAdmin: { [puebloId]: true },
+      habilitado: true,
+      creado: Date.now(),
+    })
+  }
+
+  async function quitarDeEstePueblo(uid, pueblosAdminActuales) {
+    const nuevo = { ...pueblosAdminActuales }
+    delete nuevo[puebloId]
+    await update(ref(db, `usuarios/${uid}`), { pueblosAdmin: nuevo })
+  }
+
+  if (error) return <div className="error-banner">{error}</div>
+
+  return (
+    <div>
+      <FormularioNuevoAdmin onCrear={crearAdmin} />
+
+      {usuarios === null && <p className="empty-state">Cargando administradores…</p>}
+
+      {usuarios !== null && !administradores.length && (
+        <p className="empty-state">Todavía no hay administradores en {puebloNombre || 'este pueblo'}.</p>
+      )}
+
+      {administradores.map((a) => (
+        <div className="card" key={a.uid} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ flex: 1 }}>
+            <b>{a.nombre || '(sin nombre)'}</b>
+            <div className="hint" style={{ margin: 0 }}>{a.correo}</div>
+            {a.rol === 'superadmin' && (
+              <div className="hint" style={{ margin: 0, fontWeight: 700 }}>Super admin (todos los pueblos)</div>
+            )}
+          </div>
+          {a.rol === 'admin' && (
+            <button
+              className="link-btn"
+              style={{ color: '#a83226' }}
+              onClick={() => {
+                if (confirm(`¿Quitarle acceso de administrador a ${a.nombre} en este pueblo?`)) {
+                  quitarDeEstePueblo(a.uid, a.pueblosAdmin)
+                }
+              }}
+            >
+              Quitar
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function FormularioNuevoAdmin({ onCrear }) {
+  const [abierto, setAbierto] = useState(false)
+  const [nombre, setNombre] = useState('')
+  const [correo, setCorreo] = useState('')
+  const [contrasena, setContrasena] = useState('')
+  const [creando, setCreando] = useState(false)
+  const [error, setError] = useState('')
+
+  async function confirmar() {
+    setError('')
+    if (!nombre.trim() || !correo.trim() || contrasena.length < 6) {
+      setError('Completa nombre, correo, y una contraseña de al menos 6 caracteres.')
+      return
+    }
+    setCreando(true)
+    try {
+      await onCrear({ nombre: nombre.trim(), correo: correo.trim(), contrasena })
+      setNombre('')
+      setCorreo('')
+      setContrasena('')
+      setAbierto(false)
+    } catch (e) {
+      setError(mensajeErrorCuenta(e.code))
+    } finally {
+      setCreando(false)
+    }
+  }
+
+  if (!abierto) {
+    return (
+      <button className="btn-primary" style={{ marginBottom: 16 }} onClick={() => setAbierto(true)}>
+        + Agregar administrador
+      </button>
+    )
+  }
+
+  return (
+    <div className="card">
+      <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>Nuevo administrador</h2>
+      <p className="hint" style={{ marginTop: 0 }}>
+        Va a poder administrar choferes y rutas de este pueblo únicamente.
+      </p>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="field">
+        <label>Nombre</label>
+        <input value={nombre} onChange={(e) => setNombre(e.target.value)} />
+      </div>
+      <div className="field">
+        <label>Correo electrónico</label>
+        <input type="email" value={correo} onChange={(e) => setCorreo(e.target.value)} />
+      </div>
+      <div className="field">
+        <label>Contraseña inicial</label>
+        <input
+          type="text"
+          value={contrasena}
+          onChange={(e) => setContrasena(e.target.value)}
+          placeholder="Mínimo 6 caracteres — compártela con esa persona"
+        />
+      </div>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setAbierto(false)}>
+          Cancelar
+        </button>
+        <button className="btn-primary" style={{ flex: 1 }} onClick={confirmar} disabled={creando}>
+          {creando ? 'Creando…' : 'Crear administrador'}
+        </button>
+      </div>
     </div>
   )
 }
