@@ -510,6 +510,27 @@ function PanelAdministradoresDePueblo({ puebloId, puebloNombre, esSuperadmin }) 
       .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '', 'es'))
   }, [usuarios, puebloId, esSuperadmin])
 
+  // Cualquier cuenta que todavía no sea admin de este pueblo, para
+  // asignarla sin crear una cuenta nueva. Un admin regular no ve
+  // cuentas afiliadas a OTRO pueblo (mismo criterio que en Choferes).
+  const usuariosDisponibles = useMemo(() => {
+    if (!usuarios) return []
+    return Object.entries(usuarios)
+      .map(([uid, u]) => ({ uid, ...u }))
+      .filter((u) => {
+        if (u.rol === 'admin' && u.pueblosAdmin?.[puebloId]) return false // ya lo es
+        if (u.rol === 'superadmin') return false // ya administra todo
+        if (esSuperadmin) return true
+        const perteneceAOtroPueblo =
+          (u.rol === 'chofer' && u.puebloId && u.puebloId !== puebloId) ||
+          (u.rol === 'admin' &&
+            u.pueblosAdmin &&
+            Object.keys(u.pueblosAdmin).some((id) => id !== puebloId))
+        return !perteneceAOtroPueblo
+      })
+      .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '', 'es'))
+  }, [usuarios, puebloId, esSuperadmin])
+
   async function crearAdmin({ nombre, correo, contrasena }) {
     const uid = await crearCuentaSinPerderSesion(correo, contrasena)
     await set(ref(db, `usuarios/${uid}`), {
@@ -522,6 +543,11 @@ function PanelAdministradoresDePueblo({ puebloId, puebloNombre, esSuperadmin }) 
     })
   }
 
+  async function asignarAdminExistente(uid, pueblosAdminActuales) {
+    const nuevo = { ...(pueblosAdminActuales || {}), [puebloId]: true }
+    await update(ref(db, `usuarios/${uid}`), { rol: 'admin', pueblosAdmin: nuevo })
+  }
+
   async function quitarDeEstePueblo(uid, pueblosAdminActuales) {
     const nuevo = { ...pueblosAdminActuales }
     delete nuevo[puebloId]
@@ -532,7 +558,13 @@ function PanelAdministradoresDePueblo({ puebloId, puebloNombre, esSuperadmin }) 
 
   return (
     <div>
-      <FormularioNuevoAdmin onCrear={crearAdmin} />
+      <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+        <FormularioNuevoAdmin onCrear={crearAdmin} />
+        <FormularioAsignarAdminExistente
+          usuariosDisponibles={usuariosDisponibles}
+          onAsignar={asignarAdminExistente}
+        />
+      </div>
 
       {usuarios === null && <p className="empty-state">Cargando administradores…</p>}
 
@@ -568,6 +600,74 @@ function PanelAdministradoresDePueblo({ puebloId, puebloNombre, esSuperadmin }) 
   )
 }
 
+function FormularioAsignarAdminExistente({ usuariosDisponibles, onAsignar }) {
+  const [abierto, setAbierto] = useState(false)
+  const [uidElegido, setUidElegido] = useState('')
+  const [asignando, setAsignando] = useState(false)
+  const [error, setError] = useState('')
+
+  const elegido = usuariosDisponibles.find((u) => u.uid === uidElegido)
+
+  async function confirmar() {
+    setError('')
+    if (!uidElegido) {
+      setError('Elige una cuenta de la lista.')
+      return
+    }
+    setAsignando(true)
+    try {
+      await onAsignar(uidElegido, elegido?.pueblosAdmin)
+      setUidElegido('')
+      setAbierto(false)
+    } catch {
+      setError('No se pudo asignar. Intenta de nuevo.')
+    } finally {
+      setAsignando(false)
+    }
+  }
+
+  if (!abierto) {
+    return (
+      <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setAbierto(true)}>
+        Asignar admin existente
+      </button>
+    )
+  }
+
+  return (
+    <div className="card" style={{ flex: '1 1 100%' }}>
+      <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>Asignar cuenta existente</h2>
+      <p className="hint" style={{ marginTop: 0 }}>
+        Convierte una cuenta que ya existe en administrador de este
+        pueblo. Si ya administraba otro pueblo, conserva ese acceso
+        además de este.
+      </p>
+      {error && <div className="error-banner">{error}</div>}
+
+      <div className="field">
+        <label>Cuenta</label>
+        <select value={uidElegido} onChange={(e) => setUidElegido(e.target.value)}>
+          <option value="">Selecciona una cuenta…</option>
+          {usuariosDisponibles.map((u) => (
+            <option key={u.uid} value={u.uid}>
+              {u.nombre || '(sin nombre)'} — {u.correo} ({u.rol || 'pasajero'})
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setAbierto(false)}>
+          Cancelar
+        </button>
+        <button className="btn-primary" style={{ flex: 1 }} onClick={confirmar} disabled={asignando}>
+          {asignando ? 'Asignando…' : 'Asignar como admin'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function FormularioNuevoAdmin({ onCrear }) {
   const [abierto, setAbierto] = useState(false)
   const [nombre, setNombre] = useState('')
@@ -598,14 +698,14 @@ function FormularioNuevoAdmin({ onCrear }) {
 
   if (!abierto) {
     return (
-      <button className="btn-primary" style={{ marginBottom: 16 }} onClick={() => setAbierto(true)}>
+      <button className="btn-primary" style={{ flex: 1 }} onClick={() => setAbierto(true)}>
         + Agregar administrador
       </button>
     )
   }
 
   return (
-    <div className="card">
+    <div className="card" style={{ flex: '1 1 100%' }}>
       <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>Nuevo administrador</h2>
       <p className="hint" style={{ marginTop: 0 }}>
         Va a poder administrar choferes y rutas de este pueblo únicamente.
