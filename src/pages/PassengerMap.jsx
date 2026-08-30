@@ -238,6 +238,12 @@ export default function PassengerMap() {
     map.flyTo({ center: [coord[1], coord[0]], zoom: Math.max(map.getZoom(), 16), duration: 600 })
   }
 
+  function centrarEnAnuncio(banner) {
+    const map = mapRef.current
+    if (!map || banner?.lat == null || banner?.lng == null) return
+    map.flyTo({ center: [banner.lng, banner.lat], zoom: 17, duration: 600 })
+  }
+
   const [mapaListo, setMapaListo] = useState(false)
 
   // ---- Crea el mapa una sola vez ----
@@ -901,7 +907,13 @@ export default function PassengerMap() {
           )}
 
           {anuncioActual && (
-            <div className="anuncio-card">
+            <div
+              className="anuncio-card"
+              onClick={() => centrarEnAnuncio(anuncioActual)}
+              role={anuncioActual.lat != null ? 'button' : undefined}
+              tabIndex={anuncioActual.lat != null ? 0 : undefined}
+              style={{ cursor: anuncioActual.lat != null ? 'pointer' : 'default' }}
+            >
               {anuncioActual.imagenUrl ? (
                 <img src={anuncioActual.imagenUrl} alt="" className="anuncio-imagen" />
               ) : (
@@ -914,7 +926,7 @@ export default function PassengerMap() {
                   <div className="anuncio-descripcion">{anuncioActual.descripcion}</div>
                 )}
                 {anuncioActual.lat != null && (
-                  <div className="anuncio-accion">📍 Toca el pin del mapa para más info</div>
+                  <div className="anuncio-accion">📍 Toca para ver el pin en el mapa</div>
                 )}
               </div>
               {bannersSeleccionados.length > 1 && (
