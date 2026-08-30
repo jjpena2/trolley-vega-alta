@@ -1,10 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ref, onValue, update, set } from 'firebase/database'
-import { db, crearCuentaSinPerderSesion } from '../firebase'
+import { sendPasswordResetEmail } from 'firebase/auth'
+import { db, auth, crearCuentaSinPerderSesion } from '../firebase'
 import { useAuth } from '../context/AuthContext'
 import { usePueblo } from '../context/PuebloContext'
 import { useRoutesForPueblo, useRutasHuerfanas } from '../context/RoutesContext'
 import { RUTAS_SEMILLA } from '../data/routesVegaBaja'
+
+// Firebase no deja que un admin le ponga directamente una contraseña
+// nueva a otra cuenta (eso requeriría un servidor propio con
+// privilegios especiales, que esta app no tiene). Lo que sí podemos
+// hacer, de forma segura, es enviarle a esa persona un correo para que
+// ELLA elija su nueva contraseña.
+async function enviarRestablecerContrasena(correo) {
+  await sendPasswordResetEmail(auth, correo)
+}
 
 export default function AdminDashboard() {
   const { profile } = useAuth()
@@ -421,6 +431,9 @@ function FilaChofer({ chofer, rutas, onGuardar }) {
   const [habilitado, setHabilitado] = useState(chofer.habilitado !== false)
   const [guardando, setGuardando] = useState(false)
   const [guardado, setGuardado] = useState(false)
+  const [enviandoReset, setEnviandoReset] = useState(false)
+  const [resetEnviado, setResetEnviado] = useState(false)
+  const [errorReset, setErrorReset] = useState('')
 
   const hayCambios =
     nombre !== (chofer.nombre || '') ||
@@ -436,6 +449,20 @@ function FilaChofer({ chofer, rutas, onGuardar }) {
       setGuardado(true)
     } finally {
       setGuardando(false)
+    }
+  }
+
+  async function restablecerContrasena() {
+    setErrorReset('')
+    setResetEnviado(false)
+    setEnviandoReset(true)
+    try {
+      await enviarRestablecerContrasena(chofer.correo)
+      setResetEnviado(true)
+    } catch {
+      setErrorReset('No se pudo enviar el correo. Revisa que el correo esté bien escrito.')
+    } finally {
+      setEnviandoReset(false)
     }
   }
 
@@ -470,8 +497,23 @@ function FilaChofer({ chofer, rutas, onGuardar }) {
         </button>
       </div>
 
+      {errorReset && <div className="error-banner">{errorReset}</div>}
+
       <button className="btn-primary" onClick={guardar} disabled={guardando || !hayCambios}>
         {guardando ? 'Guardando…' : guardado ? 'Guardado ✓' : 'Guardar cambios'}
+      </button>
+
+      <button
+        className="link-btn"
+        style={{ display: 'block', marginTop: 12 }}
+        onClick={restablecerContrasena}
+        disabled={enviandoReset}
+      >
+        {enviandoReset
+          ? 'Enviando…'
+          : resetEnviado
+          ? 'Correo enviado ✓'
+          : '🔑 Enviarle correo para cambiar contraseña'}
       </button>
     </div>
   )
@@ -573,29 +615,70 @@ function PanelAdministradoresDePueblo({ puebloId, puebloNombre, esSuperadmin }) 
       )}
 
       {administradores.map((a) => (
-        <div className="card" key={a.uid} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ flex: 1 }}>
-            <b>{a.nombre || '(sin nombre)'}</b>
-            <div className="hint" style={{ margin: 0 }}>{a.correo}</div>
-            {a.rol === 'superadmin' && (
-              <div className="hint" style={{ margin: 0, fontWeight: 700 }}>Super admin (todos los pueblos)</div>
-            )}
-          </div>
-          {a.rol === 'admin' && (
-            <button
-              className="link-btn"
-              style={{ color: '#a83226' }}
-              onClick={() => {
-                if (confirm(`¿Quitarle acceso de administrador a ${a.nombre} en este pueblo?`)) {
-                  quitarDeEstePueblo(a.uid, a.pueblosAdmin)
-                }
-              }}
-            >
-              Quitar
-            </button>
+        <FilaAdmin key={a.uid} admin={a} onQuitar={quitarDeEstePueblo} />
+      ))}
+    </div>
+  )
+}
+
+function FilaAdmin({ admin, onQuitar }) {
+  const [enviandoReset, setEnviandoReset] = useState(false)
+  const [resetEnviado, setResetEnviado] = useState(false)
+  const [errorReset, setErrorReset] = useState('')
+
+  async function restablecerContrasena() {
+    setErrorReset('')
+    setResetEnviado(false)
+    setEnviandoReset(true)
+    try {
+      await enviarRestablecerContrasena(admin.correo)
+      setResetEnviado(true)
+    } catch {
+      setErrorReset('No se pudo enviar el correo.')
+    } finally {
+      setEnviandoReset(false)
+    }
+  }
+
+  return (
+    <div className="card">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ flex: 1 }}>
+          <b>{admin.nombre || '(sin nombre)'}</b>
+          <div className="hint" style={{ margin: 0 }}>{admin.correo}</div>
+          {admin.rol === 'superadmin' && (
+            <div className="hint" style={{ margin: 0, fontWeight: 700 }}>Super admin (todos los pueblos)</div>
           )}
         </div>
-      ))}
+        {admin.rol === 'admin' && (
+          <button
+            className="link-btn"
+            style={{ color: '#a83226' }}
+            onClick={() => {
+              if (confirm(`¿Quitarle acceso de administrador a ${admin.nombre} en este pueblo?`)) {
+                onQuitar(admin.uid, admin.pueblosAdmin)
+              }
+            }}
+          >
+            Quitar
+          </button>
+        )}
+      </div>
+
+      {errorReset && <div className="error-banner" style={{ marginTop: 12, marginBottom: 0 }}>{errorReset}</div>}
+
+      <button
+        className="link-btn"
+        style={{ display: 'block', marginTop: 12 }}
+        onClick={restablecerContrasena}
+        disabled={enviandoReset}
+      >
+        {enviandoReset
+          ? 'Enviando…'
+          : resetEnviado
+          ? 'Correo enviado ✓'
+          : '🔑 Enviarle correo para cambiar contraseña'}
+      </button>
     </div>
   )
 }
@@ -1287,6 +1370,9 @@ function FilaUsuario({ usuario, pueblos, onGuardar }) {
   const [pueblosAdmin, setPueblosAdmin] = useState(usuario.pueblosAdmin || {})
   const [guardando, setGuardando] = useState(false)
   const [guardado, setGuardado] = useState(false)
+  const [enviandoReset, setEnviandoReset] = useState(false)
+  const [resetEnviado, setResetEnviado] = useState(false)
+  const [errorReset, setErrorReset] = useState('')
 
   function alternarPueblo(id) {
     setPueblosAdmin((prev) => {
@@ -1308,6 +1394,20 @@ function FilaUsuario({ usuario, pueblos, onGuardar }) {
       setGuardado(true)
     } finally {
       setGuardando(false)
+    }
+  }
+
+  async function restablecerContrasena() {
+    setErrorReset('')
+    setResetEnviado(false)
+    setEnviandoReset(true)
+    try {
+      await enviarRestablecerContrasena(usuario.correo)
+      setResetEnviado(true)
+    } catch {
+      setErrorReset('No se pudo enviar el correo.')
+    } finally {
+      setEnviandoReset(false)
     }
   }
 
@@ -1353,8 +1453,23 @@ function FilaUsuario({ usuario, pueblos, onGuardar }) {
         </div>
       )}
 
+      {errorReset && <div className="error-banner">{errorReset}</div>}
+
       <button className="btn-primary" onClick={guardar} disabled={guardando || !hayCambios}>
         {guardando ? 'Guardando…' : guardado ? 'Guardado ✓' : 'Guardar cambios'}
+      </button>
+
+      <button
+        className="link-btn"
+        style={{ display: 'block', marginTop: 12 }}
+        onClick={restablecerContrasena}
+        disabled={enviandoReset}
+      >
+        {enviandoReset
+          ? 'Enviando…'
+          : resetEnviado
+          ? 'Correo enviado ✓'
+          : '🔑 Enviarle correo para cambiar contraseña'}
       </button>
     </div>
   )
