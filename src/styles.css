@@ -827,3 +827,49 @@ a {
 .proximamente-icono {
   font-size: 2.2rem;
 }
+
+/* ===== Tarjeta de anuncio en una parada ===== */
+.anuncio-card {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  background: linear-gradient(0deg, rgba(242, 169, 59, 0.08), rgba(242, 169, 59, 0.08)), #fff;
+  border: 1.5px dashed var(--gold-500);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.anuncio-imagen {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.anuncio-icono {
+  font-size: 1.6rem;
+  flex-shrink: 0;
+}
+
+.anuncio-etiqueta {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-500);
+}
+
+.anuncio-titulo {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--ink-900);
+}
+
+.anuncio-descripcion {
+  font-size: 0.82rem;
+  color: var(--ink-500);
+}
