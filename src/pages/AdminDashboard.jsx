@@ -3,7 +3,7 @@ import { ref, onValue, update } from 'firebase/database'
 import { db } from '../firebase'
 import { useAuth } from '../context/AuthContext'
 import { usePueblo } from '../context/PuebloContext'
-import { useRoutesForPueblo } from '../context/RoutesContext'
+import { useRoutesForPueblo, useRutasHuerfanas } from '../context/RoutesContext'
 
 export default function AdminDashboard() {
   const { profile } = useAuth()
@@ -208,10 +208,82 @@ function rutaVacia() {
   }
 }
 
+// Si hay rutas de antes de que existieran los pueblos (guardadas
+// sueltas), permite importarlas al pueblo que se está administrando.
+function PanelImportarRutas({ importando, setImportando, onImportar }) {
+  const huerfanas = useRutasHuerfanas()
+  const [abierto, setAbierto] = useState(false)
+  const [seleccionadas, setSeleccionadas] = useState({})
+
+  if (huerfanas === null || !huerfanas.length) return null
+
+  function alternar(id) {
+    setSeleccionadas((prev) => ({ ...prev, [id]: !prev[id] }))
+  }
+
+  async function confirmar() {
+    const aImportar = huerfanas.filter((r) => seleccionadas[r.id])
+    if (!aImportar.length) return
+    setImportando(true)
+    try {
+      await onImportar(aImportar)
+      setAbierto(false)
+      setSeleccionadas({})
+    } finally {
+      setImportando(false)
+    }
+  }
+
+  if (!abierto) {
+    return (
+      <button className="btn-secondary" style={{ marginBottom: 16 }} onClick={() => setAbierto(true)}>
+        📥 Importar rutas que ya tenía ({huerfanas.length})
+      </button>
+    )
+  }
+
+  return (
+    <div className="card">
+      <p className="hint" style={{ marginTop: 0 }}>
+        Encontramos {huerfanas.length} ruta(s) guardadas de antes.
+        Marca las que quieras copiar a este pueblo.
+      </p>
+      <div className="pueblos-checkbox-list" style={{ marginBottom: 14 }}>
+        {huerfanas.map((r) => (
+          <label key={r.id} className="pueblo-checkbox">
+            <input
+              type="checkbox"
+              checked={!!seleccionadas[r.id]}
+              onChange={() => alternar(r.id)}
+            />
+            <span className="stop-dot" style={{ background: r.color }} />
+            {r.nombre} ({r.paradas.length} paradas)
+          </label>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button className="btn-secondary" onClick={() => setAbierto(false)} style={{ flex: 1 }}>
+          Cancelar
+        </button>
+        <button
+          className="btn-primary"
+          onClick={confirmar}
+          disabled={importando || !Object.values(seleccionadas).some(Boolean)}
+          style={{ flex: 1 }}
+        >
+          {importando ? 'Importando…' : 'Importar seleccionadas'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function PanelRutas({ puebloId }) {
-  const { rutas, guardarRuta, eliminarRuta, usandoSemilla, publicarSemilla } = useRoutesForPueblo(puebloId)
+  const { rutas, guardarRuta, eliminarRuta, usandoSemilla, publicarSemilla, importarRutas } =
+    useRoutesForPueblo(puebloId)
   const [editando, setEditando] = useState(null)
   const [publicando, setPublicando] = useState(false)
+  const [importando, setImportando] = useState(false)
 
   async function onPublicarSemilla() {
     setPublicando(true)
@@ -232,15 +304,21 @@ function PanelRutas({ puebloId }) {
         <div className="card">
           <p className="hint" style={{ marginTop: 0 }}>
             Este pueblo todavía no tiene rutas propias — se le está
-            mostrando a los pasajeros datos de ejemplo (Vega Baja).
-            Publícalos aquí para empezar a editarlos, o crea tus rutas
-            desde cero abajo.
+            mostrando a los pasajeros datos de ejemplo (Vega Baja) por
+            ahora. Publícalos aquí para empezar a editarlos, o crea tus
+            rutas desde cero abajo.
           </p>
           <button className="btn-secondary" onClick={onPublicarSemilla} disabled={publicando}>
             {publicando ? 'Publicando…' : 'Publicar datos de ejemplo para editar'}
           </button>
         </div>
       )}
+
+      <PanelImportarRutas
+        importando={importando}
+        setImportando={setImportando}
+        onImportar={importarRutas}
+      />
 
       <button className="btn-primary" style={{ marginBottom: 16 }} onClick={() => setEditando(rutaVacia())}>
         + Crear ruta nueva
