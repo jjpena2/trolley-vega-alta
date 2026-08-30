@@ -880,3 +880,22 @@ a {
   font-weight: 700;
   margin-top: 2px;
 }
+
+.anuncio-puntos {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-self: center;
+}
+
+.anuncio-puntos .punto {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line);
+  display: block;
+}
+
+.anuncio-puntos .punto.activo {
+  background: var(--gold-500);
+}
