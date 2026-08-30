@@ -264,6 +264,17 @@ export function obtenerTrazado(geometria) {
   return geometria.geometry
 }
 
+// Identificador estable de una parada: si es un punto compartido entre
+// rutas (tiene anclaId), se usa ese — así un banner puesto en esa
+// parada se ve igual sin importar por cuál ruta la esté mirando el
+// pasajero. Si es una parada exclusiva de una ruta, se usa
+// ruta+código. Se sanea para que sirva como llave de Firebase (no
+// puede tener ".", "#", "$", "[", "]", "/").
+export function claveParada(routeId, parada) {
+  const base = parada.anclaId ? `ancla__${parada.anclaId}` : `${routeId}__${parada.codigo}`
+  return base.replace(/[.#$[\]/]/g, '-')
+}
+
 // ---------- Fábrica: depende de la lista de rutas ACTUAL ----------
 // Se vuelve a crear cada vez que cambian las rutas (por ejemplo, cuando
 // un admin edita algo desde el panel), gracias a useMemo en
