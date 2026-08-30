@@ -91,32 +91,54 @@ function elEl(html) {
   return div.firstElementChild
 }
 
-// HTML del anuncio de una parada, para usar dentro de un popup del mapa.
-function htmlAnuncio(b) {
-  const contenido = `
-    <b>${b.titulo}</b>
-    ${b.descripcion ? `<br/><span style="font-size:0.85em;">${b.descripcion}</span>` : ''}
-  `
-  return `
-    <div style="
-      margin-top:8px;padding-top:8px;border-top:1px dashed #ccc;
-      display:flex;gap:8px;align-items:center;
-    ">
-      ${
-        b.imagenUrl
-          ? `<img src="${b.imagenUrl}" style="width:36px;height:36px;border-radius:8px;object-fit:cover;flex-shrink:0;" />`
-          : `<span style="font-size:1.2em;">📢</span>`
-      }
-      <div>
-        <span style="font-size:0.65em;color:#999;text-transform:uppercase;">Anuncio</span><br/>
-        ${
-          b.enlace
-            ? `<a href="${b.enlace}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline;">${contenido}</a>`
-            : contenido
-        }
-      </div>
-    </div>
-  `
+// Escapa comillas para meter texto dentro de un atributo HTML onclick="..."
+function escaparParaAtributo(texto) {
+  return String(texto || '').replace(/'/g, '&#39;').replace(/"/g, '&quot;')
+}
+
+// HTML de TODOS los anuncios activos de una parada, para usar dentro de
+// un popup del mapa. Si un anuncio tiene coordenadas propias, tocarlo
+// centra el mapa ahí (usando la función global que se registra más
+// abajo en el componente).
+function htmlAnuncios(lista) {
+  if (!lista.length) return ''
+  return lista
+    .map((b) => {
+      const contenido = `
+        <b>${b.titulo}</b>
+        ${b.descripcion ? `<br/><span style="font-size:0.85em;">${b.descripcion}</span>` : ''}
+      `
+      const tieneMapa = b.lat != null && b.lng != null
+      const accionOnClick = tieneMapa
+        ? `onclick="window.__verAnuncioEnMapa && window.__verAnuncioEnMapa(${b.lat},${b.lng},'${escaparParaAtributo(b.titulo)}')"`
+        : ''
+      const cursor = tieneMapa ? 'cursor:pointer;' : ''
+      const pieMapa = tieneMapa
+        ? `<div style="font-size:0.7em;color:#146c6e;margin-top:2px;">📍 Toca para ver en el mapa</div>`
+        : ''
+      const pieEnlace = b.enlace
+        ? `<a href="${b.enlace}" target="_blank" rel="noopener noreferrer" style="font-size:0.7em;color:#146c6e;text-decoration:underline;">Más información ↗</a>`
+        : ''
+      return `
+        <div style="
+          margin-top:8px;padding-top:8px;border-top:1px dashed #ccc;
+          display:flex;gap:8px;align-items:center;${cursor}
+        " ${accionOnClick}>
+          ${
+            b.imagenUrl
+              ? `<img src="${b.imagenUrl}" style="width:36px;height:36px;border-radius:8px;object-fit:cover;flex-shrink:0;" />`
+              : `<span style="font-size:1.2em;">📢</span>`
+          }
+          <div>
+            <span style="font-size:0.65em;color:#999;text-transform:uppercase;">Anuncio</span><br/>
+            ${contenido}
+            ${pieMapa}
+            ${pieEnlace}
+          </div>
+        </div>
+      `
+    })
+    .join('')
 }
 
 export default function PassengerMap() {
@@ -136,6 +158,7 @@ export default function PassengerMap() {
   const marcadoresParadaRef = useRef(new Map())
   const marcadoresTrolleyRef = useRef(new Map())
   const marcadoresPlanRef = useRef([])
+  const marcadorAnuncioRef = useRef(null)
 
   // Al cambiar de pueblo, ninguna selección anterior sigue teniendo
   // sentido (las rutas/paradas son de otro lugar).
@@ -201,14 +224,17 @@ export default function PassengerMap() {
 
   const proximaCodigo = llegadas?.proximaCodigo ?? null
 
-  // Anuncio (si existe) de la parada que el pasajero tiene seleccionada.
-  const bannerSeleccionado = useMemo(() => {
-    if (!paradaSeleccionada || !rutaMostrada) return null
+  // Anuncios activos de la parada que el pasajero tiene seleccionada
+  // (puede haber varios en la misma parada).
+  const bannersSeleccionados = useMemo(() => {
+    if (!paradaSeleccionada || !rutaMostrada) return []
     const parada = listaParadas.find((p) => p.codigo === paradaSeleccionada)
-    if (!parada) return null
+    if (!parada) return []
     const clave = claveParada(rutaMostrada.id, parada)
-    const b = banners[clave]
-    return b && b.activo !== false ? b : null
+    const porParada = banners[clave] || {}
+    return Object.entries(porParada)
+      .map(([bannerId, b]) => ({ bannerId, ...b }))
+      .filter((b) => b.activo !== false)
   }, [paradaSeleccionada, rutaMostrada, listaParadas, banners])
 
   function elegirRuta(id) {
@@ -242,6 +268,14 @@ export default function PassengerMap() {
     const coord = coordDeParadaEnRuta(routeId, codigo)
     if (!map || !coord) return
     map.flyTo({ center: [coord[1], coord[0]], zoom: Math.max(map.getZoom(), 16), duration: 600 })
+  }
+
+  function verAnuncioEnMapa(banner) {
+    if (banner.lat != null && banner.lng != null && window.__verAnuncioEnMapa) {
+      window.__verAnuncioEnMapa(banner.lat, banner.lng, banner.titulo)
+    } else if (banner.enlace) {
+      window.open(banner.enlace, '_blank', 'noopener,noreferrer')
+    }
   }
 
   const [mapaListo, setMapaListo] = useState(false)
@@ -303,6 +337,35 @@ export default function PassengerMap() {
       mapListoRef.current = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ---- Función global para que los anuncios (HTML puro dentro de un
+  // popup del mapa) puedan pedirle al mapa que se centre en su
+  // ubicación al tocarlos. ----
+  useEffect(() => {
+    window.__verAnuncioEnMapa = (lat, lng, titulo) => {
+      const map = mapRef.current
+      if (!map) return
+      map.flyTo({ center: [lng, lat], zoom: 17, duration: 700 })
+      if (marcadorAnuncioRef.current) marcadorAnuncioRef.current.remove()
+      const el = elEl(`
+        <div style="
+          width:22px;height:22px;border-radius:50% 50% 50% 0;
+          background:#f2a93b;transform:rotate(-45deg);
+          box-shadow:0 3px 8px rgba(0,0,0,0.35);border:2px solid #fff;
+          display:flex;align-items:center;justify-content:center;
+        "><span style="transform:rotate(45deg);font-size:11px;">📢</span></div>
+      `)
+      const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
+        .setLngLat([lng, lat])
+        .setPopup(new maplibregl.Popup({ offset: 14 }).setText(titulo))
+        .addTo(map)
+      marker.togglePopup()
+      marcadorAnuncioRef.current = marker
+    }
+    return () => {
+      delete window.__verAnuncioEnMapa
+    }
   }, [])
 
   // ---- Recentra el mapa cuando cambia el pueblo activo (o cuando el
@@ -482,8 +545,10 @@ export default function PassengerMap() {
       const esProxima = p.codigo === proximaCodigo
       const esConexion = p.conexiones && p.conexiones.length > 0
       const clave = claveParada(rutaMostrada.id, p)
-      const bannerDeParada = banners[clave]
-      const tieneAnuncio = bannerDeParada && bannerDeParada.activo !== false
+      const bannersDeParada = Object.entries(banners[clave] || {})
+        .map(([bannerId, b]) => ({ bannerId, ...b }))
+        .filter((b) => b.activo !== false)
+      const tieneAnuncio = bannersDeParada.length > 0
       const base = esSeleccionada ? 20 : esProxima ? 16 : esConexion ? 15 : 10
       const forma = esConexion ? '30%' : '50%'
       const relleno = esProxima || esSeleccionada ? rutaMostrada.color : '#fff'
@@ -521,7 +586,7 @@ export default function PassengerMap() {
           ? `~${p.minutos} min (próxima vuelta)`
           : `~${p.minutos} min`
 
-      const anuncioHtml = tieneAnuncio ? htmlAnuncio(bannerDeParada) : ''
+      const anuncioHtml = htmlAnuncios(bannersDeParada)
 
       const popup = new maplibregl.Popup({ offset: 12, closeButton: true }).setHTML(`
         <div class="popup-card">
@@ -871,27 +936,30 @@ export default function PassengerMap() {
             </p>
           )}
 
-          {bannerSeleccionado && (
-            <a
-              href={bannerSeleccionado.enlace || undefined}
-              target={bannerSeleccionado.enlace ? '_blank' : undefined}
-              rel="noopener noreferrer"
+          {bannersSeleccionados.map((b) => (
+            <div
+              key={b.bannerId}
               className="anuncio-card"
+              onClick={() => verAnuncioEnMapa(b)}
+              role="button"
+              tabIndex={0}
+              style={{ cursor: b.lat != null || b.enlace ? 'pointer' : 'default' }}
             >
-              {bannerSeleccionado.imagenUrl ? (
-                <img src={bannerSeleccionado.imagenUrl} alt="" className="anuncio-imagen" />
+              {b.imagenUrl ? (
+                <img src={b.imagenUrl} alt="" className="anuncio-imagen" />
               ) : (
                 <span className="anuncio-icono">📢</span>
               )}
               <div>
-                <span className="anuncio-etiqueta">Anuncio · {bannerSeleccionado.nombreParada}</span>
-                <div className="anuncio-titulo">{bannerSeleccionado.titulo}</div>
-                {bannerSeleccionado.descripcion && (
-                  <div className="anuncio-descripcion">{bannerSeleccionado.descripcion}</div>
+                <span className="anuncio-etiqueta">Anuncio · {b.nombreParada}</span>
+                <div className="anuncio-titulo">{b.titulo}</div>
+                {b.descripcion && <div className="anuncio-descripcion">{b.descripcion}</div>}
+                {b.lat != null && (
+                  <div className="anuncio-accion">📍 Toca para ver en el mapa</div>
                 )}
               </div>
-            </a>
-          )}
+            </div>
+          ))}
 
           <div className="stops-list">
             {listaParadas.map((p) => (

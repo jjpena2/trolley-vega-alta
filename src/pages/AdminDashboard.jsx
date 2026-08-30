@@ -1248,27 +1248,36 @@ function PanelPublicidad({ puebloId }) {
   const { banners, guardarBanner, eliminarBanner } = useBannersForPueblo(puebloId)
   const [rutaId, setRutaId] = useState('')
   const [codigoParada, setCodigoParada] = useState('')
+  const [creandoNuevo, setCreandoNuevo] = useState(false)
+  const [editandoId, setEditandoId] = useState(null)
 
   const rutaElegida = rutas.find((r) => r.id === rutaId)
   const paradaElegida = rutaElegida?.paradas.find((p) => p.codigo === codigoParada)
   const clave = rutaElegida && paradaElegida ? claveParada(rutaElegida.id, paradaElegida) : null
+  const bannersDeParada = clave ? Object.entries(banners[clave] || {}) : []
 
-  const listaBanners = useMemo(() => {
-    return Object.entries(banners)
-      .map(([clave, b]) => ({ clave, ...b }))
-      .sort((a, b) => (b.actualizado || 0) - (a.actualizado || 0))
+  const listaBannersTodos = useMemo(() => {
+    return Object.entries(banners).flatMap(([clave, porParada]) =>
+      Object.entries(porParada || {}).map(([bannerId, b]) => ({ clave, bannerId, ...b }))
+    ).sort((a, b) => (b.actualizado || 0) - (a.actualizado || 0))
   }, [banners])
+
+  function alGuardar() {
+    setCreandoNuevo(false)
+    setEditandoId(null)
+  }
 
   return (
     <div>
       <div className="card">
         <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>
-          Anuncio para una parada
+          Anuncios en una parada
         </h2>
         <p className="hint" style={{ marginTop: 0 }}>
-          Elige una ruta y una parada. Si esa parada es compartida por
-          varias rutas (punto de transbordo), el anuncio se ve igual
-          desde cualquiera de ellas.
+          Elige una ruta y una parada. Puedes poner varios anuncios en la
+          misma parada. Si esa parada es compartida por varias rutas
+          (punto de transbordo), los anuncios se ven igual desde
+          cualquiera de ellas.
         </p>
 
         <div className="field">
@@ -1278,6 +1287,8 @@ function PanelPublicidad({ puebloId }) {
             onChange={(e) => {
               setRutaId(e.target.value)
               setCodigoParada('')
+              setCreandoNuevo(false)
+              setEditandoId(null)
             }}
           >
             <option value="">Selecciona una ruta…</option>
@@ -1292,7 +1303,14 @@ function PanelPublicidad({ puebloId }) {
         {rutaElegida && (
           <div className="field">
             <label>Parada</label>
-            <select value={codigoParada} onChange={(e) => setCodigoParada(e.target.value)}>
+            <select
+              value={codigoParada}
+              onChange={(e) => {
+                setCodigoParada(e.target.value)
+                setCreandoNuevo(false)
+                setEditandoId(null)
+              }}
+            >
               <option value="">Selecciona una parada…</option>
               {rutaElegida.paradas.map((p) => (
                 <option key={p.codigo} value={p.codigo}>
@@ -1304,54 +1322,85 @@ function PanelPublicidad({ puebloId }) {
         )}
 
         {clave && (
-          <FormularioBanner
-            key={clave}
-            clave={clave}
-            nombreParada={paradaElegida.nombre}
-            rutaNombre={rutaElegida.nombre}
-            existente={banners[clave]}
-            onGuardar={guardarBanner}
-          />
+          <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--line)' }}>
+            {bannersDeParada.map(([bannerId, b]) =>
+              editandoId === bannerId ? (
+                <FormularioBanner
+                  key={bannerId}
+                  clave={clave}
+                  bannerId={bannerId}
+                  nombreParada={paradaElegida.nombre}
+                  rutaNombre={rutaElegida.nombre}
+                  existente={b}
+                  onGuardar={guardarBanner}
+                  onListo={alGuardar}
+                  onCancelar={() => setEditandoId(null)}
+                />
+              ) : (
+                <div
+                  className="card"
+                  key={bannerId}
+                  style={{ display: 'flex', alignItems: 'center', gap: 12 }}
+                >
+                  <div style={{ flex: 1 }}>
+                    <b>{b.titulo}</b>
+                    {b.activo === false && <span className="hint"> · (pausado)</span>}
+                    {b.lat != null && <div className="hint" style={{ margin: 0 }}>📍 tiene ubicación en el mapa</div>}
+                  </div>
+                  <button className="link-btn" onClick={() => setEditandoId(bannerId)}>
+                    Editar
+                  </button>
+                  <button
+                    className="link-btn"
+                    style={{ color: '#a83226' }}
+                    onClick={() => {
+                      if (confirm(`¿Borrar el anuncio "${b.titulo}"?`)) {
+                        eliminarBanner(clave, bannerId)
+                      }
+                    }}
+                  >
+                    Borrar
+                  </button>
+                </div>
+              )
+            )}
+
+            {creandoNuevo ? (
+              <FormularioBanner
+                clave={clave}
+                bannerId={null}
+                nombreParada={paradaElegida.nombre}
+                rutaNombre={rutaElegida.nombre}
+                existente={null}
+                onGuardar={guardarBanner}
+                onListo={alGuardar}
+                onCancelar={() => setCreandoNuevo(false)}
+              />
+            ) : (
+              <button className="btn-primary" onClick={() => setCreandoNuevo(true)}>
+                + Agregar anuncio a esta parada
+              </button>
+            )}
+          </div>
         )}
       </div>
 
-      {!listaBanners.length && (
+      {!listaBannersTodos.length && (
         <p className="empty-state">Todavía no hay anuncios en este pueblo.</p>
       )}
-
-      {listaBanners.map((b) => (
-        <div className="card" key={b.clave} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ flex: 1 }}>
-            <b>{b.titulo}</b>
-            <div className="hint" style={{ margin: 0 }}>
-              📍 {b.nombreParada} {!b.activo && '· (inactivo)'}
-            </div>
-          </div>
-          <button
-            className="link-btn"
-            style={{ color: '#a83226' }}
-            onClick={() => {
-              if (confirm(`¿Borrar el anuncio "${b.titulo}"?`)) {
-                eliminarBanner(b.clave)
-              }
-            }}
-          >
-            Borrar
-          </button>
-        </div>
-      ))}
     </div>
   )
 }
 
-function FormularioBanner({ clave, nombreParada, rutaNombre, existente, onGuardar }) {
+function FormularioBanner({ clave, bannerId, nombreParada, rutaNombre, existente, onGuardar, onListo, onCancelar }) {
   const [titulo, setTitulo] = useState(existente?.titulo || '')
   const [descripcion, setDescripcion] = useState(existente?.descripcion || '')
   const [imagenUrl, setImagenUrl] = useState(existente?.imagenUrl || '')
   const [enlace, setEnlace] = useState(existente?.enlace || '')
+  const [lat, setLat] = useState(existente?.lat ?? '')
+  const [lng, setLng] = useState(existente?.lng ?? '')
   const [activo, setActivo] = useState(existente?.activo !== false)
   const [guardando, setGuardando] = useState(false)
-  const [guardado, setGuardado] = useState(false)
   const [error, setError] = useState('')
 
   async function guardar() {
@@ -1361,18 +1410,18 @@ function FormularioBanner({ clave, nombreParada, rutaNombre, existente, onGuarda
       return
     }
     setGuardando(true)
-    setGuardado(false)
     try {
-      await onGuardar(clave, {
+      await onGuardar(clave, bannerId, {
         titulo: titulo.trim(),
         descripcion: descripcion.trim(),
         imagenUrl: imagenUrl.trim(),
         enlace: enlace.trim(),
+        ...(lat !== '' && lng !== '' ? { lat: Number(lat), lng: Number(lng) } : {}),
         activo,
         nombreParada,
         rutaNombre,
       })
-      setGuardado(true)
+      onListo()
     } catch {
       setError('No se pudo guardar. Intenta de nuevo.')
     } finally {
@@ -1381,7 +1430,7 @@ function FormularioBanner({ clave, nombreParada, rutaNombre, existente, onGuarda
   }
 
   return (
-    <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--line)' }}>
+    <div className="card">
       {error && <div className="error-banner">{error}</div>}
 
       <div className="field">
@@ -1401,8 +1450,24 @@ function FormularioBanner({ clave, nombreParada, rutaNombre, existente, onGuarda
         <input value={imagenUrl} onChange={(e) => setImagenUrl(e.target.value)} placeholder="https://…" />
       </div>
       <div className="field">
-        <label>Enlace al tocar el anuncio (opcional)</label>
+        <label>Enlace externo al tocar el anuncio (opcional)</label>
         <input value={enlace} onChange={(e) => setEnlace(e.target.value)} placeholder="https://…" />
+      </div>
+
+      <p className="hint" style={{ marginTop: 0 }}>
+        Opcional: coordenadas del negocio (clic derecho en Google Maps →
+        copiar coordenadas). Si las pones, el pasajero podrá tocar el
+        anuncio para ver ese punto exacto en el mapa.
+      </p>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <div className="field" style={{ flex: 1 }}>
+          <label>Latitud</label>
+          <input type="number" step="any" value={lat} onChange={(e) => setLat(e.target.value)} placeholder="18.4130" />
+        </div>
+        <div className="field" style={{ flex: 1 }}>
+          <label>Longitud</label>
+          <input type="number" step="any" value={lng} onChange={(e) => setLng(e.target.value)} placeholder="-66.3944" />
+        </div>
       </div>
 
       <div className="role-toggle" style={{ marginBottom: 16 }}>
@@ -1414,9 +1479,14 @@ function FormularioBanner({ clave, nombreParada, rutaNombre, existente, onGuarda
         </button>
       </div>
 
-      <button className="btn-primary" onClick={guardar} disabled={guardando}>
-        {guardando ? 'Guardando…' : guardado ? 'Guardado ✓' : existente ? 'Actualizar anuncio' : 'Crear anuncio'}
-      </button>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button className="btn-secondary" style={{ flex: 1 }} onClick={onCancelar}>
+          Cancelar
+        </button>
+        <button className="btn-primary" style={{ flex: 1 }} onClick={guardar} disabled={guardando}>
+          {guardando ? 'Guardando…' : existente ? 'Guardar cambios' : 'Crear anuncio'}
+        </button>
+      </div>
     </div>
   )
 }
