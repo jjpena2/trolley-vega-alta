@@ -817,3 +817,13 @@ a {
   height: 16px;
   cursor: pointer;
 }
+
+/* ===== Aviso de "rutas próximamente" para un pueblo sin configurar ===== */
+.proximamente-card {
+  text-align: center;
+  padding: 20px 10px 8px;
+}
+
+.proximamente-icono {
+  font-size: 2.2rem;
+}
