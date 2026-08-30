@@ -184,7 +184,7 @@ function PanelChoferes({ puebloId, esSuperadmin }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 16 }}>
         <FormularioNuevoChofer rutas={rutas} onCrear={crearChofer} />
         <FormularioAsignarExistente
           usuariosDisponibles={usuariosDisponibles}
@@ -558,7 +558,7 @@ function PanelAdministradoresDePueblo({ puebloId, puebloNombre, esSuperadmin }) 
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 16 }}>
         <FormularioNuevoAdmin onCrear={crearAdmin} />
         <FormularioAsignarAdminExistente
           usuariosDisponibles={usuariosDisponibles}
