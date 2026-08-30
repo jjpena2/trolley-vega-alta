@@ -4,6 +4,7 @@ import { db } from '../firebase'
 import { useAuth } from '../context/AuthContext'
 import { usePueblo } from '../context/PuebloContext'
 import { useRoutesForPueblo, useRutasHuerfanas } from '../context/RoutesContext'
+import { RUTAS_SEMILLA } from '../data/routesVegaBaja'
 
 export default function AdminDashboard() {
   const { profile } = useAuth()
@@ -217,6 +218,90 @@ function rutaVacia() {
 
 // Si hay rutas de antes de que existieran los pueblos (guardadas
 // sueltas), permite importarlas al pueblo que se está administrando.
+// Deja elegir cuáles de las 6 rutas de ejemplo (Vega Baja) importar,
+// en vez de todo-o-nada.
+function PanelImportarSemilla({ importando, setImportando, onImportar }) {
+  const [abierto, setAbierto] = useState(false)
+  const [seleccionadas, setSeleccionadas] = useState({})
+  const [error, setError] = useState('')
+
+  function alternar(id) {
+    setSeleccionadas((prev) => ({ ...prev, [id]: !prev[id] }))
+  }
+
+  function marcarTodas(valor) {
+    setSeleccionadas(Object.fromEntries(RUTAS_SEMILLA.map((r) => [r.id, valor])))
+  }
+
+  async function confirmar() {
+    setError('')
+    const aImportar = RUTAS_SEMILLA.filter((r) => seleccionadas[r.id])
+    if (!aImportar.length) return
+    setImportando(true)
+    try {
+      await onImportar(aImportar)
+      setAbierto(false)
+      setSeleccionadas({})
+    } catch {
+      setError('No se pudo importar. Intenta de nuevo.')
+    } finally {
+      setImportando(false)
+    }
+  }
+
+  if (!abierto) {
+    return (
+      <button className="btn-secondary" style={{ marginBottom: 16 }} onClick={() => setAbierto(true)}>
+        📚 Importar datos de ejemplo
+      </button>
+    )
+  }
+
+  return (
+    <div className="card">
+      <p className="hint" style={{ marginTop: 0 }}>
+        Marca cuáles rutas de ejemplo (del sistema de Vega Baja) quieres
+        copiar a este pueblo para empezar a editarlas.
+      </p>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="pueblos-checkbox-list" style={{ marginBottom: 14 }}>
+        {RUTAS_SEMILLA.map((r) => (
+          <label key={r.id} className="pueblo-checkbox">
+            <input
+              type="checkbox"
+              checked={!!seleccionadas[r.id]}
+              onChange={() => alternar(r.id)}
+            />
+            <span className="stop-dot" style={{ background: r.color }} />
+            {r.nombre} ({r.paradas.length} paradas)
+          </label>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        <button className="link-btn" onClick={() => marcarTodas(true)}>
+          Marcar todas
+        </button>
+        <button className="link-btn" onClick={() => marcarTodas(false)}>
+          Ninguna
+        </button>
+      </div>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button className="btn-secondary" onClick={() => setAbierto(false)} style={{ flex: 1 }}>
+          Cancelar
+        </button>
+        <button
+          className="btn-primary"
+          onClick={confirmar}
+          disabled={importando || !Object.values(seleccionadas).some(Boolean)}
+          style={{ flex: 1 }}
+        >
+          {importando ? 'Importando…' : 'Importar seleccionadas'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function PanelImportarRutas({ importando, setImportando, onImportar }) {
   const huerfanas = useRutasHuerfanas()
   const [abierto, setAbierto] = useState(false)
@@ -286,51 +371,40 @@ function PanelImportarRutas({ importando, setImportando, onImportar }) {
 }
 
 function PanelRutas({ puebloId }) {
-  const { rutas, guardarRuta, eliminarRuta, usandoSemilla, publicarSemilla, importarRutas } =
-    useRoutesForPueblo(puebloId)
+  const { rutas, guardarRuta, eliminarRuta, usandoSemilla, importarRutas } = useRoutesForPueblo(puebloId)
   const [editando, setEditando] = useState(null)
-  const [publicando, setPublicando] = useState(false)
-  const [importando, setImportando] = useState(false)
-  const [errorPublicar, setErrorPublicar] = useState('')
-
-  async function onPublicarSemilla() {
-    setErrorPublicar('')
-    setPublicando(true)
-    try {
-      await publicarSemilla()
-    } catch (e) {
-      setErrorPublicar(
-        'No se pudo publicar. Revisa que las reglas de Firebase te den permiso de escritura en este pueblo.'
-      )
-    } finally {
-      setPublicando(false)
-    }
-  }
+  const [importandoSemilla, setImportandoSemilla] = useState(false)
+  const [importandoHuerfanas, setImportandoHuerfanas] = useState(false)
 
   if (editando) {
     return <EditorRuta ruta={editando} onCerrar={() => setEditando(null)} onGuardar={guardarRuta} />
   }
 
+  // Mientras el pueblo no tenga rutas propias, 'rutas' trae el
+  // respaldo de ejemplo (Vega Baja) — no lo mostramos como si fuera
+  // del pueblo, porque confunde. Solo mostramos la lista real.
+  const rutasReales = usandoSemilla ? [] : rutas
+
   return (
     <div>
       {usandoSemilla && (
         <div className="card">
-          <p className="hint" style={{ marginTop: 0 }}>
-            Este pueblo todavía no tiene rutas propias — se le está
-            mostrando a los pasajeros datos de ejemplo (Vega Baja) por
-            ahora. Publícalos aquí para empezar a editarlos, o crea tus
-            rutas desde cero abajo.
+          <p className="hint" style={{ marginTop: 0, marginBottom: 0 }}>
+            Este pueblo todavía no tiene rutas propias. Puedes importar
+            algunas de ejemplo para empezar, o crear las tuyas desde cero.
           </p>
-          {errorPublicar && <div className="error-banner">{errorPublicar}</div>}
-          <button className="btn-secondary" onClick={onPublicarSemilla} disabled={publicando}>
-            {publicando ? 'Publicando…' : 'Publicar datos de ejemplo para editar'}
-          </button>
         </div>
       )}
 
+      <PanelImportarSemilla
+        importando={importandoSemilla}
+        setImportando={setImportandoSemilla}
+        onImportar={importarRutas}
+      />
+
       <PanelImportarRutas
-        importando={importando}
-        setImportando={setImportando}
+        importando={importandoHuerfanas}
+        setImportando={setImportandoHuerfanas}
         onImportar={importarRutas}
       />
 
@@ -338,7 +412,11 @@ function PanelRutas({ puebloId }) {
         + Crear ruta nueva
       </button>
 
-      {rutas.map((r) => (
+      {!rutasReales.length && (
+        <p className="empty-state">Todavía no hay rutas en este pueblo.</p>
+      )}
+
+      {rutasReales.map((r) => (
         <div className="card" key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span className="stop-dot" style={{ background: r.color, width: 14, height: 14 }} />
           <div style={{ flex: 1 }}>
