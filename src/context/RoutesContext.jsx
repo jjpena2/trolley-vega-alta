@@ -1,8 +1,34 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
-import { onValue, ref, set, remove } from 'firebase/database'
+import { onValue, ref, set, remove, update } from 'firebase/database'
 import { db } from '../firebase'
 import { crearMotorRutas, RUTAS_SEMILLA } from '../data/routesVegaBaja'
 import { usePueblo } from './PuebloContext'
+
+// Antes de que existieran los pueblos, las rutas se guardaban sueltas
+// directamente en /rutas/{routeId}. Este hook detecta esas rutas
+// "huérfanas" (las que tienen un array de 'paradas' directo en su
+// nodo) para poder importarlas a un pueblo nuevo, en vez de perderlas.
+export function useRutasHuerfanas() {
+  const [huerfanas, setHuerfanas] = useState(null) // null = cargando
+
+  useEffect(() => {
+    const rutasRef = ref(db, 'rutas')
+    const unsub = onValue(rutasRef, (snap) => {
+      if (!snap.exists()) {
+        setHuerfanas([])
+        return
+      }
+      const val = snap.val()
+      const encontradas = Object.entries(val)
+        .filter(([, v]) => Array.isArray(v?.paradas))
+        .map(([id, v]) => ({ ...v, id: v.id || id }))
+      setHuerfanas(encontradas)
+    })
+    return unsub
+  }, [])
+
+  return huerfanas
+}
 
 // Hook reutilizable: rutas de UN pueblo específico, con lectura en vivo
 // y las funciones de escritura para administrarlas. Se usa tanto para
@@ -52,6 +78,17 @@ export function useRoutesForPueblo(puebloId) {
     await set(ref(db, `rutas/${puebloId}`), conFecha)
   }
 
+  // Copia rutas que ya existían de antes (sueltas, sin pueblo) hacia
+  // este pueblo. No borra las que ya tenga el pueblo, solo agrega/
+  // reemplaza las que traigas.
+  async function importarRutas(rutasAImportar) {
+    if (!puebloId || !rutasAImportar.length) return
+    const conFecha = Object.fromEntries(
+      rutasAImportar.map((r) => [r.id, { ...r, actualizado: Date.now() }])
+    )
+    await update(ref(db, `rutas/${puebloId}`), conFecha)
+  }
+
   return {
     rutas,
     motor,
@@ -60,6 +97,7 @@ export function useRoutesForPueblo(puebloId) {
     guardarRuta,
     eliminarRuta,
     publicarSemilla,
+    importarRutas,
   }
 }
 
