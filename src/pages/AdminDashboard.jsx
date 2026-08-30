@@ -5,7 +5,8 @@ import { db, auth, crearCuentaSinPerderSesion } from '../firebase'
 import { useAuth } from '../context/AuthContext'
 import { usePueblo } from '../context/PuebloContext'
 import { useRoutesForPueblo, useRutasHuerfanas } from '../context/RoutesContext'
-import { RUTAS_SEMILLA } from '../data/routesVegaBaja'
+import { useBannersForPueblo } from '../context/BannersContext'
+import { RUTAS_SEMILLA, claveParada } from '../data/routesVegaBaja'
 
 // Firebase no deja que un admin le ponga directamente una contraseña
 // nueva a otra cuenta (eso requeriría un servidor propio con
@@ -70,6 +71,9 @@ export default function AdminDashboard() {
         <button type="button" className={tab === 'rutas' ? 'active' : ''} onClick={() => setTab('rutas')}>
           Rutas
         </button>
+        <button type="button" className={tab === 'publicidad' ? 'active' : ''} onClick={() => setTab('publicidad')}>
+          Publicidad
+        </button>
         <button
           type="button"
           className={tab === 'administradores' ? 'active' : ''}
@@ -91,6 +95,7 @@ export default function AdminDashboard() {
 
       {tab === 'choferes' && <PanelChoferes puebloId={puebloAdminId} esSuperadmin={esSuperadmin} />}
       {tab === 'rutas' && <PanelRutas puebloId={puebloAdminId} />}
+      {tab === 'publicidad' && <PanelPublicidad puebloId={puebloAdminId} />}
       {tab === 'administradores' && (
         <PanelAdministradoresDePueblo
           puebloId={puebloAdminId}
@@ -1232,6 +1237,186 @@ function EditorRuta({ ruta, onCerrar, onGuardar }) {
           {guardando ? 'Guardando…' : 'Guardar ruta'}
         </button>
       </div>
+    </div>
+  )
+}
+
+// ==================== PUBLICIDAD POR PARADA ====================
+
+function PanelPublicidad({ puebloId }) {
+  const { rutas } = useRoutesForPueblo(puebloId)
+  const { banners, guardarBanner, eliminarBanner } = useBannersForPueblo(puebloId)
+  const [rutaId, setRutaId] = useState('')
+  const [codigoParada, setCodigoParada] = useState('')
+
+  const rutaElegida = rutas.find((r) => r.id === rutaId)
+  const paradaElegida = rutaElegida?.paradas.find((p) => p.codigo === codigoParada)
+  const clave = rutaElegida && paradaElegida ? claveParada(rutaElegida.id, paradaElegida) : null
+
+  const listaBanners = useMemo(() => {
+    return Object.entries(banners)
+      .map(([clave, b]) => ({ clave, ...b }))
+      .sort((a, b) => (b.actualizado || 0) - (a.actualizado || 0))
+  }, [banners])
+
+  return (
+    <div>
+      <div className="card">
+        <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>
+          Anuncio para una parada
+        </h2>
+        <p className="hint" style={{ marginTop: 0 }}>
+          Elige una ruta y una parada. Si esa parada es compartida por
+          varias rutas (punto de transbordo), el anuncio se ve igual
+          desde cualquiera de ellas.
+        </p>
+
+        <div className="field">
+          <label>Ruta</label>
+          <select
+            value={rutaId}
+            onChange={(e) => {
+              setRutaId(e.target.value)
+              setCodigoParada('')
+            }}
+          >
+            <option value="">Selecciona una ruta…</option>
+            {rutas.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.nombre}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {rutaElegida && (
+          <div className="field">
+            <label>Parada</label>
+            <select value={codigoParada} onChange={(e) => setCodigoParada(e.target.value)}>
+              <option value="">Selecciona una parada…</option>
+              {rutaElegida.paradas.map((p) => (
+                <option key={p.codigo} value={p.codigo}>
+                  {p.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {clave && (
+          <FormularioBanner
+            key={clave}
+            clave={clave}
+            nombreParada={paradaElegida.nombre}
+            rutaNombre={rutaElegida.nombre}
+            existente={banners[clave]}
+            onGuardar={guardarBanner}
+          />
+        )}
+      </div>
+
+      {!listaBanners.length && (
+        <p className="empty-state">Todavía no hay anuncios en este pueblo.</p>
+      )}
+
+      {listaBanners.map((b) => (
+        <div className="card" key={b.clave} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ flex: 1 }}>
+            <b>{b.titulo}</b>
+            <div className="hint" style={{ margin: 0 }}>
+              📍 {b.nombreParada} {!b.activo && '· (inactivo)'}
+            </div>
+          </div>
+          <button
+            className="link-btn"
+            style={{ color: '#a83226' }}
+            onClick={() => {
+              if (confirm(`¿Borrar el anuncio "${b.titulo}"?`)) {
+                eliminarBanner(b.clave)
+              }
+            }}
+          >
+            Borrar
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function FormularioBanner({ clave, nombreParada, rutaNombre, existente, onGuardar }) {
+  const [titulo, setTitulo] = useState(existente?.titulo || '')
+  const [descripcion, setDescripcion] = useState(existente?.descripcion || '')
+  const [imagenUrl, setImagenUrl] = useState(existente?.imagenUrl || '')
+  const [enlace, setEnlace] = useState(existente?.enlace || '')
+  const [activo, setActivo] = useState(existente?.activo !== false)
+  const [guardando, setGuardando] = useState(false)
+  const [guardado, setGuardado] = useState(false)
+  const [error, setError] = useState('')
+
+  async function guardar() {
+    setError('')
+    if (!titulo.trim()) {
+      setError('Ponle un título al anuncio (ej. el nombre del negocio).')
+      return
+    }
+    setGuardando(true)
+    setGuardado(false)
+    try {
+      await onGuardar(clave, {
+        titulo: titulo.trim(),
+        descripcion: descripcion.trim(),
+        imagenUrl: imagenUrl.trim(),
+        enlace: enlace.trim(),
+        activo,
+        nombreParada,
+        rutaNombre,
+      })
+      setGuardado(true)
+    } catch {
+      setError('No se pudo guardar. Intenta de nuevo.')
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--line)' }}>
+      {error && <div className="error-banner">{error}</div>}
+
+      <div className="field">
+        <label>Título (ej. nombre del negocio)</label>
+        <input value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Panadería El Buen Pan" />
+      </div>
+      <div className="field">
+        <label>Descripción corta</label>
+        <input
+          value={descripcion}
+          onChange={(e) => setDescripcion(e.target.value)}
+          placeholder="2x1 en pan de agua todos los lunes"
+        />
+      </div>
+      <div className="field">
+        <label>URL de imagen (opcional)</label>
+        <input value={imagenUrl} onChange={(e) => setImagenUrl(e.target.value)} placeholder="https://…" />
+      </div>
+      <div className="field">
+        <label>Enlace al tocar el anuncio (opcional)</label>
+        <input value={enlace} onChange={(e) => setEnlace(e.target.value)} placeholder="https://…" />
+      </div>
+
+      <div className="role-toggle" style={{ marginBottom: 16 }}>
+        <button type="button" className={activo ? 'active' : ''} onClick={() => setActivo(true)}>
+          Activo
+        </button>
+        <button type="button" className={!activo ? 'active' : ''} onClick={() => setActivo(false)}>
+          Pausado
+        </button>
+      </div>
+
+      <button className="btn-primary" onClick={guardar} disabled={guardando}>
+        {guardando ? 'Guardando…' : guardado ? 'Guardado ✓' : existente ? 'Actualizar anuncio' : 'Crear anuncio'}
+      </button>
     </div>
   )
 }

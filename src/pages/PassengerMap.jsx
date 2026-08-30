@@ -5,10 +5,12 @@ import { onValue, ref } from 'firebase/database'
 import { db } from '../firebase'
 import { useRoutes } from '../context/RoutesContext'
 import { usePueblo } from '../context/PuebloContext'
+import { useBannersForPueblo } from '../context/BannersContext'
 import {
   calcularLlegadasPorDistancia,
   segmentoEntreDistancias,
   distanciaDeParada,
+  claveParada,
 } from '../data/routesVegaBaja'
 
 // Centro genérico (vista general de Puerto Rico) para cuando un pueblo
@@ -89,9 +91,38 @@ function elEl(html) {
   return div.firstElementChild
 }
 
+// HTML del anuncio de una parada, para usar dentro de un popup del mapa.
+function htmlAnuncio(b) {
+  const contenido = `
+    <b>${b.titulo}</b>
+    ${b.descripcion ? `<br/><span style="font-size:0.85em;">${b.descripcion}</span>` : ''}
+  `
+  return `
+    <div style="
+      margin-top:8px;padding-top:8px;border-top:1px dashed #ccc;
+      display:flex;gap:8px;align-items:center;
+    ">
+      ${
+        b.imagenUrl
+          ? `<img src="${b.imagenUrl}" style="width:36px;height:36px;border-radius:8px;object-fit:cover;flex-shrink:0;" />`
+          : `<span style="font-size:1.2em;">📢</span>`
+      }
+      <div>
+        <span style="font-size:0.65em;color:#999;text-transform:uppercase;">Anuncio</span><br/>
+        ${
+          b.enlace
+            ? `<a href="${b.enlace}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline;">${contenido}</a>`
+            : contenido
+        }
+      </div>
+    </div>
+  `
+}
+
 export default function PassengerMap() {
   const { rutas, motor, cargando: cargandoRutas } = useRoutes()
   const { puebloActivo, pueblos, setPuebloActivo } = usePueblo()
+  const { banners } = useBannersForPueblo(puebloActivo?.id)
   const [choferes, setChoferes] = useState({})
   const [rutaSeleccionada, setRutaSeleccionada] = useState('todas')
   const [paradaSeleccionada, setParadaSeleccionada] = useState(null)
@@ -169,6 +200,16 @@ export default function PassengerMap() {
   }, [llegadas, geometria])
 
   const proximaCodigo = llegadas?.proximaCodigo ?? null
+
+  // Anuncio (si existe) de la parada que el pasajero tiene seleccionada.
+  const bannerSeleccionado = useMemo(() => {
+    if (!paradaSeleccionada || !rutaMostrada) return null
+    const parada = listaParadas.find((p) => p.codigo === paradaSeleccionada)
+    if (!parada) return null
+    const clave = claveParada(rutaMostrada.id, parada)
+    const b = banners[clave]
+    return b && b.activo !== false ? b : null
+  }, [paradaSeleccionada, rutaMostrada, listaParadas, banners])
 
   function elegirRuta(id) {
     setRutaSeleccionada(id)
@@ -440,20 +481,30 @@ export default function PassengerMap() {
       const esSeleccionada = p.codigo === paradaSeleccionada
       const esProxima = p.codigo === proximaCodigo
       const esConexion = p.conexiones && p.conexiones.length > 0
+      const clave = claveParada(rutaMostrada.id, p)
+      const bannerDeParada = banners[clave]
+      const tieneAnuncio = bannerDeParada && bannerDeParada.activo !== false
       const base = esSeleccionada ? 20 : esProxima ? 16 : esConexion ? 15 : 10
       const forma = esConexion ? '30%' : '50%'
       const relleno = esProxima || esSeleccionada ? rutaMostrada.color : '#fff'
       const colorIcono = esProxima || esSeleccionada ? '#fff' : rutaMostrada.color
       const el = elEl(`
-        <div style="
-          width:${base}px;height:${base}px;border-radius:${forma};
-          background:${relleno};
-          border:${esSeleccionada ? 3 : 2}px solid ${esSeleccionada ? '#17262a' : rutaMostrada.color};
-          box-shadow:0 2px 6px rgba(0,0,0,0.3);cursor:pointer;
-          display:flex;align-items:center;justify-content:center;
-          font-size:${Math.round(base * 0.62)}px;line-height:1;color:${colorIcono};
-          transform:${esConexion ? 'rotate(45deg)' : 'none'};
-        ">${esConexion ? `<span style="transform:rotate(-45deg)">⇄</span>` : ''}</div>
+        <div style="position:relative;">
+          <div style="
+            width:${base}px;height:${base}px;border-radius:${forma};
+            background:${relleno};
+            border:${esSeleccionada ? 3 : 2}px solid ${esSeleccionada ? '#17262a' : rutaMostrada.color};
+            box-shadow:0 2px 6px rgba(0,0,0,0.3);cursor:pointer;
+            display:flex;align-items:center;justify-content:center;
+            font-size:${Math.round(base * 0.62)}px;line-height:1;color:${colorIcono};
+            transform:${esConexion ? 'rotate(45deg)' : 'none'};
+          ">${esConexion ? `<span style="transform:rotate(-45deg)">⇄</span>` : ''}</div>
+          ${
+            tieneAnuncio
+              ? `<div style="position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:50%;background:#f2a93b;border:2px solid #fff;font-size:8px;display:flex;align-items:center;justify-content:center;">📢</div>`
+              : ''
+          }
+        </div>
       `)
       el.addEventListener('click', () => elegirParada(p.codigo))
 
@@ -470,11 +521,14 @@ export default function PassengerMap() {
           ? `~${p.minutos} min (próxima vuelta)`
           : `~${p.minutos} min`
 
+      const anuncioHtml = tieneAnuncio ? htmlAnuncio(bannerDeParada) : ''
+
       const popup = new maplibregl.Popup({ offset: 12, closeButton: true }).setHTML(`
         <div class="popup-card">
           <b>${p.nombre}</b><br/>
           ${etaHtml}
           ${conexionesHtml}
+          ${anuncioHtml}
         </div>
       `)
 
@@ -486,7 +540,7 @@ export default function PassengerMap() {
       marcadoresParadaRef.current.set(p.codigo, { marker, popup, lng: p.lng, lat: p.lat })
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [listaParadas, proximaCodigo, paradaSeleccionada, rutaMostrada, modoTodas, mapaListo])
+  }, [listaParadas, proximaCodigo, paradaSeleccionada, rutaMostrada, banners, modoTodas, mapaListo])
 
   // ---- Centra el mapa y abre el popup al elegir una parada ----
   useEffect(() => {
@@ -815,6 +869,28 @@ export default function PassengerMap() {
             <p className="hint" style={{ padding: '0 4px', marginTop: 0 }}>
               Cargando trazado real por carreteras…
             </p>
+          )}
+
+          {bannerSeleccionado && (
+            <a
+              href={bannerSeleccionado.enlace || undefined}
+              target={bannerSeleccionado.enlace ? '_blank' : undefined}
+              rel="noopener noreferrer"
+              className="anuncio-card"
+            >
+              {bannerSeleccionado.imagenUrl ? (
+                <img src={bannerSeleccionado.imagenUrl} alt="" className="anuncio-imagen" />
+              ) : (
+                <span className="anuncio-icono">📢</span>
+              )}
+              <div>
+                <span className="anuncio-etiqueta">Anuncio · {bannerSeleccionado.nombreParada}</span>
+                <div className="anuncio-titulo">{bannerSeleccionado.titulo}</div>
+                {bannerSeleccionado.descripcion && (
+                  <div className="anuncio-descripcion">{bannerSeleccionado.descripcion}</div>
+                )}
+              </div>
+            </a>
           )}
 
           <div className="stops-list">
