@@ -79,10 +79,14 @@ export default function AdminDashboard() {
         )}
       </div>
 
-      {tab === 'choferes' && <PanelChoferes puebloId={puebloAdminId} />}
+      {tab === 'choferes' && <PanelChoferes puebloId={puebloAdminId} esSuperadmin={esSuperadmin} />}
       {tab === 'rutas' && <PanelRutas puebloId={puebloAdminId} />}
       {tab === 'administradores' && (
-        <PanelAdministradoresDePueblo puebloId={puebloAdminId} puebloNombre={pueblosAdministrables.find((p) => p.id === puebloAdminId)?.nombre} />
+        <PanelAdministradoresDePueblo
+          puebloId={puebloAdminId}
+          puebloNombre={pueblosAdministrables.find((p) => p.id === puebloAdminId)?.nombre}
+          esSuperadmin={esSuperadmin}
+        />
       )}
       {tab === 'pueblos' && esSuperadmin && (
         <PanelPueblos
@@ -99,7 +103,7 @@ export default function AdminDashboard() {
 
 // ==================== CHOFERES ====================
 
-function PanelChoferes({ puebloId }) {
+function PanelChoferes({ puebloId, esSuperadmin }) {
   const { rutas } = useRoutesForPueblo(puebloId)
   const [usuarios, setUsuarios] = useState(null)
   const [error, setError] = useState('')
@@ -127,14 +131,26 @@ function PanelChoferes({ puebloId }) {
 
   // Cualquier cuenta que todavía no sea chofer de ESTE pueblo (puede
   // ser un pasajero, un chofer de otro pueblo, etc.) — para asignarla
-  // sin crear una cuenta nueva.
+  // sin crear una cuenta nueva. Un admin regular (no superadmin) solo
+  // ve cuentas que no pertenecen a OTRO pueblo — así nunca ve ni toca
+  // datos de choferes/admins ajenos a lo que administra.
   const usuariosDisponibles = useMemo(() => {
     if (!usuarios) return []
     return Object.entries(usuarios)
       .map(([uid, u]) => ({ uid, ...u }))
-      .filter((u) => !(u.rol === 'chofer' && u.puebloId === puebloId))
+      .filter((u) => {
+        if (u.rol === 'chofer' && u.puebloId === puebloId) return false // ya lo es
+        if (esSuperadmin) return true
+        const perteneceAOtroPueblo =
+          (u.rol === 'chofer' && u.puebloId && u.puebloId !== puebloId) ||
+          (u.rol === 'admin' &&
+            u.pueblosAdmin &&
+            Object.keys(u.pueblosAdmin).some((id) => id !== puebloId)) ||
+          u.rol === 'superadmin'
+        return !perteneceAOtroPueblo
+      })
       .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '', 'es'))
-  }, [usuarios, puebloId])
+  }, [usuarios, puebloId, esSuperadmin])
 
   async function guardarCambios(uid, cambios) {
     await update(ref(db, `usuarios/${uid}`), cambios)
@@ -466,7 +482,7 @@ function FilaChofer({ chofer, rutas, onGuardar }) {
 // superadmin), para que cada pueblo pueda designar sus propios
 // co-administradores sin depender de pedírselo al superadministrador.
 
-function PanelAdministradoresDePueblo({ puebloId, puebloNombre }) {
+function PanelAdministradoresDePueblo({ puebloId, puebloNombre, esSuperadmin }) {
   const [usuarios, setUsuarios] = useState(null)
   const [error, setError] = useState('')
 
@@ -480,16 +496,19 @@ function PanelAdministradoresDePueblo({ puebloId, puebloNombre }) {
     return unsub
   }, [])
 
+  // Un admin regular solo ve a otros admins de ESTE pueblo — nunca a
+  // los superadmins (que administran todos los pueblos).
   const administradores = useMemo(() => {
     if (!usuarios) return []
     return Object.entries(usuarios)
       .map(([uid, u]) => ({ uid, ...u }))
-      .filter(
-        (u) =>
-          u.rol === 'superadmin' || (u.rol === 'admin' && u.pueblosAdmin?.[puebloId])
-      )
+      .filter((u) => {
+        if (u.rol === 'admin' && u.pueblosAdmin?.[puebloId]) return true
+        if (u.rol === 'superadmin' && esSuperadmin) return true
+        return false
+      })
       .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '', 'es'))
-  }, [usuarios, puebloId])
+  }, [usuarios, puebloId, esSuperadmin])
 
   async function crearAdmin({ nombre, correo, contrasena }) {
     const uid = await crearCuentaSinPerderSesion(correo, contrasena)
