@@ -1241,6 +1241,8 @@ function EditorRuta({ ruta, onCerrar, onGuardar }) {
 function PanelPueblos({ onAdministrar }) {
   const { pueblos, crearPueblo, eliminarPueblo } = usePueblo()
   const [nombreNuevo, setNombreNuevo] = useState('')
+  const [lat, setLat] = useState('')
+  const [lng, setLng] = useState('')
   const [creando, setCreando] = useState(false)
   const [error, setError] = useState('')
 
@@ -1252,8 +1254,10 @@ function PanelPueblos({ onAdministrar }) {
     }
     setCreando(true)
     try {
-      const id = await crearPueblo(nombreNuevo.trim())
+      const id = await crearPueblo(nombreNuevo.trim(), lat, lng)
       setNombreNuevo('')
+      setLat('')
+      setLng('')
       // Lleva directo a configurar las rutas del pueblo recién creado.
       onAdministrar?.(id, 'rutas')
     } catch {
@@ -1275,6 +1279,34 @@ function PanelPueblos({ onAdministrar }) {
             onChange={(e) => setNombreNuevo(e.target.value)}
             placeholder="Ej. Trolley Vega Baja"
           />
+        </div>
+        <p className="hint" style={{ marginTop: 0 }}>
+          Opcional: dale las coordenadas del centro del pueblo (clic
+          derecho en Google Maps → copiar coordenadas) para que el mapa
+          arranque enfocado ahí. Si lo dejas en blanco, arranca con una
+          vista general de Puerto Rico.
+        </p>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Latitud</label>
+            <input
+              type="number"
+              step="any"
+              value={lat}
+              onChange={(e) => setLat(e.target.value)}
+              placeholder="18.4130"
+            />
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Longitud</label>
+            <input
+              type="number"
+              step="any"
+              value={lng}
+              onChange={(e) => setLng(e.target.value)}
+              placeholder="-66.3944"
+            />
+          </div>
         </div>
         <button className="btn-primary" onClick={onCrear} disabled={creando}>
           {creando ? 'Creando…' : '+ Crear pueblo'}

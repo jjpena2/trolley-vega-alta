@@ -11,9 +11,10 @@ import {
   distanciaDeParada,
 } from '../data/routesVegaBaja'
 
-// Centro aproximado del mapa (ajusta esto cuando tengas las coordenadas
-// reales de Vega Alta / tu municipio). MapLibre usa [lng, lat].
-const CENTRO_MAPA = [-66.3944, 18.413]
+// Centro genérico (vista general de Puerto Rico) para cuando un pueblo
+// no tiene coordenadas propias configuradas todavía.
+const CENTRO_GENERICO_PR = [-66.5901, 18.2208]
+const ZOOM_GENERICO_PR = 9
 
 // Estilo de mapa vectorial gratuito, sin llave y sin límite de uso
 // (OpenFreeMap). Da el look "Google Maps / Waze" sin depender de un
@@ -89,7 +90,7 @@ function elEl(html) {
 }
 
 export default function PassengerMap() {
-  const { rutas, motor } = useRoutes()
+  const { rutas, motor, cargando: cargandoRutas } = useRoutes()
   const { puebloActivo, pueblos, setPuebloActivo } = usePueblo()
   const [choferes, setChoferes] = useState({})
   const [rutaSeleccionada, setRutaSeleccionada] = useState('todas')
@@ -136,6 +137,8 @@ export default function PassengerMap() {
     () => new Set(activos.map((c) => c.ruta).filter(Boolean)),
     [activos]
   )
+
+  const sinRutasConfiguradas = !cargandoRutas && rutas.length === 0
 
   const modoTodas = rutaSeleccionada === 'todas'
   const modoPlanificar = rutaSeleccionada === 'planificar'
@@ -204,11 +207,17 @@ export default function PassengerMap() {
 
   // ---- Crea el mapa una sola vez ----
   useEffect(() => {
+    const centroInicial =
+      puebloActivo?.lat != null && puebloActivo?.lng != null
+        ? [puebloActivo.lng, puebloActivo.lat]
+        : CENTRO_GENERICO_PR
+    const zoomInicial = puebloActivo?.lat != null ? 12 : ZOOM_GENERICO_PR
+
     const map = new maplibregl.Map({
       container: mapDivRef.current,
       style: ESTILO_MAPA,
-      center: CENTRO_MAPA,
-      zoom: 12,
+      center: centroInicial,
+      zoom: zoomInicial,
       attributionControl: true,
     })
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-left')
@@ -254,6 +263,19 @@ export default function PassengerMap() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // ---- Recentra el mapa cuando cambia el pueblo activo (o cuando el
+  // mapa recién termina de cargar) ----
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapaListo) return
+    const centro =
+      puebloActivo?.lat != null && puebloActivo?.lng != null
+        ? [puebloActivo.lng, puebloActivo.lat]
+        : CENTRO_GENERICO_PR
+    const zoom = puebloActivo?.lat != null ? 12 : ZOOM_GENERICO_PR
+    map.flyTo({ center: centro, zoom, duration: 600 })
+  }, [puebloActivo?.id, puebloActivo?.lat, puebloActivo?.lng, mapaListo])
 
   // ---- Dibuja/actualiza la línea de UNA ruta y encuadra el mapa ----
   useEffect(() => {
@@ -530,28 +552,46 @@ export default function PassengerMap() {
         </div>
       )}
 
-      <div className="route-select-wrap">
-        <select
-          className="route-select"
-          value={rutaSeleccionada}
-          onChange={(e) => elegirRuta(e.target.value)}
-        >
-          <option value="todas">🗺️ Todas las rutas</option>
-          <option value="planificar">📍 Planificar viaje</option>
-          {rutas.map((r) => (
-            <option key={r.id} value={r.id}>
-              {idsConServicio.has(r.id) ? '🟢 ' : ''}
-              {r.nombre}
-            </option>
-          ))}
-        </select>
-      </div>
+      {!sinRutasConfiguradas && (
+        <div className="route-select-wrap">
+          <select
+            className="route-select"
+            value={rutaSeleccionada}
+            onChange={(e) => elegirRuta(e.target.value)}
+          >
+            <option value="todas">🗺️ Todas las rutas</option>
+            <option value="planificar">📍 Planificar viaje</option>
+            {rutas.map((r) => (
+              <option key={r.id} value={r.id}>
+                {idsConServicio.has(r.id) ? '🟢 ' : ''}
+                {r.nombre}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div className="map-wrap">
         <div ref={mapDivRef} style={{ height: '100%', width: '100%' }} />
       </div>
 
-      {modoPlanificar && (
+      {sinRutasConfiguradas && (
+        <div className="stops-panel">
+          <div className="proximamente-card">
+            <span className="proximamente-icono">🚧</span>
+            <h2 style={{ fontFamily: 'var(--font-display)', margin: '10px 0 6px' }}>
+              Próximamente
+            </h2>
+            <p className="hint" style={{ margin: 0 }}>
+              Las rutas de <b>{puebloActivo?.nombre}</b> todavía se están
+              configurando. Vuelve a revisar pronto, o consulta con el
+              municipio para más información.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {!sinRutasConfiguradas && modoPlanificar && (
         <div className="stops-panel">
           <div className="stops-panel-header">Planificar viaje</div>
 
@@ -727,7 +767,7 @@ export default function PassengerMap() {
         </div>
       )}
 
-      {modoTodas && (
+      {!sinRutasConfiguradas && modoTodas && (
         <div className="stops-panel">
           <div className="stops-panel-header">Leyenda de rutas</div>
           <div className="route-legend-list">
@@ -757,7 +797,7 @@ export default function PassengerMap() {
         </div>
       )}
 
-      {!modoTodas && geometria && (
+      {!sinRutasConfiguradas && !modoTodas && geometria && (
         <div className="stops-panel">
           <div className="stops-panel-header" style={{ color: rutaMostrada.color }}>
             {rutaMostrada.nombre}
