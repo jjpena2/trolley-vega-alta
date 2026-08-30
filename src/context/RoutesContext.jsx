@@ -2,68 +2,75 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { onValue, ref, set, remove } from 'firebase/database'
 import { db } from '../firebase'
 import { crearMotorRutas, RUTAS_SEMILLA } from '../data/routesVegaBaja'
+import { usePueblo } from './PuebloContext'
 
-const RoutesContext = createContext(null)
-
-export function RoutesProvider({ children }) {
-  const [rutasFirebase, setRutasFirebase] = useState(null) // null = aún cargando
-  const [origen, setOrigen] = useState('cargando') // 'cargando' | 'firebase' | 'semilla'
+// Hook reutilizable: rutas de UN pueblo específico, con lectura en vivo
+// y las funciones de escritura para administrarlas. Se usa tanto para
+// "el pueblo que el pasajero está viendo ahora" (vía RoutesProvider más
+// abajo) como para "el pueblo que un admin está editando en el panel"
+// (que puede ser distinto al que esa misma persona ve como pasajero).
+export function useRoutesForPueblo(puebloId) {
+  const [rutasFirebase, setRutasFirebase] = useState(null) // null = cargando
 
   useEffect(() => {
-    const rutasRef = ref(db, 'rutas')
+    if (!puebloId) {
+      setRutasFirebase(null)
+      return
+    }
+    const rutasRef = ref(db, `rutas/${puebloId}`)
     const unsub = onValue(rutasRef, (snap) => {
-      if (snap.exists()) {
-        const obj = snap.val()
-        setRutasFirebase(Object.values(obj))
-        setOrigen('firebase')
-      } else {
-        setRutasFirebase([])
-        setOrigen('semilla')
-      }
+      setRutasFirebase(snap.exists() ? Object.values(snap.val()) : [])
     })
     return unsub
-  }, [])
+  }, [puebloId])
 
-  // Mientras no haya nada en Firebase, se usa la semilla local (los
-  // datos reales de Vega Baja) para que la app funcione desde el
-  // primer momento, sin bloquear a nadie esperando que un admin
-  // publique algo.
+  // Mientras ese pueblo no tenga rutas propias publicadas, se muestran
+  // los datos de ejemplo de Vega Baja como punto de partida.
+  const usandoSemilla = rutasFirebase !== null && rutasFirebase.length === 0
   const rutas = useMemo(() => {
-    if (origen === 'firebase') return rutasFirebase
+    if (rutasFirebase && rutasFirebase.length) return rutasFirebase
     return RUTAS_SEMILLA
-  }, [origen, rutasFirebase])
+  }, [rutasFirebase])
 
   const motor = useMemo(() => crearMotorRutas(rutas), [rutas])
 
   async function guardarRuta(ruta) {
-    const conFecha = { ...ruta, actualizado: Date.now() }
-    await set(ref(db, `rutas/${ruta.id}`), conFecha)
+    if (!puebloId) return
+    await set(ref(db, `rutas/${puebloId}/${ruta.id}`), { ...ruta, actualizado: Date.now() })
   }
 
   async function eliminarRuta(routeId) {
-    await remove(ref(db, `rutas/${routeId}`))
+    if (!puebloId) return
+    await remove(ref(db, `rutas/${puebloId}/${routeId}`))
   }
 
-  // Publica la semilla local en Firebase tal cual, para que el admin
-  // tenga un punto de partida editable en vez de una lista vacía.
   async function publicarSemilla() {
+    if (!puebloId) return
     const conFecha = Object.fromEntries(
       RUTAS_SEMILLA.map((r) => [r.id, { ...r, actualizado: Date.now() }])
     )
-    await set(ref(db, 'rutas'), conFecha)
+    await set(ref(db, `rutas/${puebloId}`), conFecha)
   }
 
-  const value = {
+  return {
     rutas,
     motor,
-    cargando: origen === 'cargando',
-    usandoSemilla: origen === 'semilla',
+    cargando: rutasFirebase === null,
+    usandoSemilla,
     guardarRuta,
     eliminarRuta,
     publicarSemilla,
   }
+}
 
-  return <RoutesContext.Provider value={value}>{children}</RoutesContext.Provider>
+// Contexto "ambiental": siempre usa el pueblo que el pasajero eligió en
+// el selector de arriba de la app (PuebloContext).
+const RoutesContext = createContext(null)
+
+export function RoutesProvider({ children }) {
+  const { puebloActivo } = usePueblo()
+  const valor = useRoutesForPueblo(puebloActivo?.id)
+  return <RoutesContext.Provider value={valor}>{children}</RoutesContext.Provider>
 }
 
 export function useRoutes() {

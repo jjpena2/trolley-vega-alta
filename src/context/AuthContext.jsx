@@ -30,16 +30,18 @@ export function AuthProvider({ children }) {
     return unsub
   }, [])
 
-  async function register({ nombre, correo, contrasena, rol, telefono, ruta }) {
+  async function register({ nombre, correo, contrasena, rol, telefono, ruta, puebloId }) {
     const cred = await createUserWithEmailAndPassword(auth, correo, contrasena)
     await updateProfile(cred.user, { displayName: nombre })
 
     const perfil = {
       nombre,
       correo,
-      rol, // 'chofer' | 'pasajero'
+      rol, // 'chofer' | 'pasajero' | 'admin' | 'superadmin'
       telefono: telefono || '',
       ruta: ruta || '',
+      puebloId: rol === 'chofer' ? puebloId || '' : '',
+      habilitado: true,
       creado: Date.now(),
     }
     await set(ref(db, `usuarios/${cred.user.uid}`), perfil)
@@ -56,8 +58,8 @@ export function AuthProvider({ children }) {
 
   async function logout() {
     // Si es chofer, lo marcamos fuera de servicio al salir.
-    if (user && profile?.rol === 'chofer') {
-      await set(ref(db, `choferesActivos/${user.uid}/activo`), false)
+    if (user && profile?.rol === 'chofer' && profile?.puebloId) {
+      await set(ref(db, `choferesActivos/${profile.puebloId}/${user.uid}/activo`), false)
     }
     await signOut(auth)
   }
