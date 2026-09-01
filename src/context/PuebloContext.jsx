@@ -8,7 +8,7 @@ const PuebloContext = createContext(null)
 // muestra este pueblo de respaldo (usando los datos de ejemplo de Vega
 // Baja) para que nunca se vea vacía. En cuanto un superadmin crea el
 // primer pueblo real, este respaldo deja de usarse.
-const PUEBLO_RESPALDO = { id: 'default', nombre: 'Trolley Vega Alta' }
+const PUEBLO_RESPALDO = { id: 'default', nombre: 'TrolleyPR' }
 
 function slugificar(texto) {
   return texto
