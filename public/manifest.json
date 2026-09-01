@@ -1,7 +1,7 @@
 {
-  "name": "Trolley Vega Alta",
-  "short_name": "Trolley VA",
-  "description": "Rastreo en vivo de los trolleys de Vega Alta, Puerto Rico",
+  "name": "TrolleyPR",
+  "short_name": "TrolleyPR",
+  "description": "Rastreo en vivo de trolleys municipales en Puerto Rico",
   "theme_color": "#146C6E",
   "background_color": "#FAF7F0",
   "display": "standalone",
