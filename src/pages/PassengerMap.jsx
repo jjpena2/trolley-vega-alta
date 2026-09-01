@@ -205,6 +205,11 @@ export default function PassengerMap() {
 
   const anuncioActual = bannersSeleccionados[indiceAnuncio] || null
 
+  // El pin del mapa muestra el anuncio que el pasajero ELIGIÓ tocando
+  // la tarjeta — no el que esté rotando en ese momento el carrusel. Se
+  // queda fijo hasta que toque otro (o cambie de parada).
+  const [anuncioFijado, setAnuncioFijado] = useState(null)
+
   function elegirRuta(id) {
     setRutaSeleccionada(id)
     setParadaSeleccionada(null)
@@ -242,6 +247,7 @@ export default function PassengerMap() {
     const map = mapRef.current
     if (!map || banner?.lat == null || banner?.lng == null) return
     map.flyTo({ center: [banner.lng, banner.lat], zoom: 17, duration: 600 })
+    setAnuncioFijado(banner)
   }
 
   const [mapaListo, setMapaListo] = useState(false)
@@ -305,9 +311,10 @@ export default function PassengerMap() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ---- Pin del anuncio actual (el que se ve en el carrusel de abajo).
-  // Se actualiza solo, y si el anuncio tiene enlace externo, tocar el
-  // pin te lleva directo ahí. ----
+  // ---- Pin del anuncio FIJADO (el que el pasajero tocó) — no cambia
+  // con la rotación automática del carrusel, solo cuando toca otro
+  // anuncio o cambia de parada. Si tiene enlace externo, tocar el pin
+  // te lleva directo ahí. ----
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapaListo) return
@@ -317,9 +324,9 @@ export default function PassengerMap() {
       marcadorAnuncioRef.current = null
     }
 
-    if (!anuncioActual || anuncioActual.lat == null || anuncioActual.lng == null) return
+    if (!anuncioFijado || anuncioFijado.lat == null || anuncioFijado.lng == null) return
 
-    const tieneEnlace = !!anuncioActual.enlace
+    const tieneEnlace = !!anuncioFijado.enlace
     const el = elEl(`
       <div style="
         width:26px;height:26px;border-radius:50% 50% 50% 0;
@@ -331,23 +338,24 @@ export default function PassengerMap() {
     `)
     if (tieneEnlace) {
       el.addEventListener('click', () => {
-        window.open(anuncioActual.enlace, '_blank', 'noopener,noreferrer')
+        window.open(anuncioFijado.enlace, '_blank', 'noopener,noreferrer')
       })
     }
     const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
-      .setLngLat([anuncioActual.lng, anuncioActual.lat])
+      .setLngLat([anuncioFijado.lng, anuncioFijado.lat])
       .addTo(map)
     marcadorAnuncioRef.current = marker
-  }, [anuncioActual, mapaListo])
+  }, [anuncioFijado, mapaListo])
 
-  // ---- Al elegir una parada nueva, si su primer anuncio tiene
-  // coordenadas, centra el mapa ahí una sola vez (no en cada rotación
-  // del carrusel, para no marear moviendo el mapa cada 5 segundos). ----
+  // ---- Al elegir una parada nueva: fija el pin en el primer anuncio
+  // con coordenadas (si hay) y centra el mapa ahí una sola vez. A
+  // partir de ahí, el pin se queda fijo hasta que toquen otro anuncio.
   useEffect(() => {
     const map = mapRef.current
-    if (!map || !mapaListo) return
     const primero = bannersSeleccionados[0]
-    if (primero && primero.lat != null && primero.lng != null) {
+    const conCoordenadas = primero && primero.lat != null && primero.lng != null
+    setAnuncioFijado(conCoordenadas ? primero : null)
+    if (map && mapaListo && conCoordenadas) {
       map.flyTo({ center: [primero.lng, primero.lat], zoom: 16, duration: 700 })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
