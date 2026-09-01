@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ref, onValue, update, set, push } from 'firebase/database'
+import { ref, onValue, update, set } from 'firebase/database'
 import { sendPasswordResetEmail } from 'firebase/auth'
 import { db, auth, crearCuentaSinPerderSesion } from '../firebase'
 import { useAuth } from '../context/AuthContext'
@@ -17,8 +17,17 @@ async function enviarRestablecerContrasena(correo) {
   await sendPasswordResetEmail(auth, correo)
 }
 
-// URL pública de la app, para armar los enlaces de invitación.
-const URL_BASE_APP = `${window.location.origin}${import.meta.env.BASE_URL}`
+// Para "invitar" a alguien (chofer o admin) sin que tú tengas que
+// inventarle una contraseña: se crea la cuenta con una contraseña
+// temporal al azar que nadie ve ni usa nunca, y de inmediato se le
+// manda el correo de "restablecer contraseña" de Firebase — así la
+// persona solo tiene que elegir SU propia contraseña para activar la
+// cuenta.
+function contrasenaTemporalAlAzar() {
+  const bytes = new Uint8Array(16)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+}
 
 export default function AdminDashboard() {
   const { profile } = useAuth()
@@ -174,8 +183,8 @@ function PanelChoferes({ puebloId, esSuperadmin }) {
     await update(ref(db, `usuarios/${uid}`), cambios)
   }
 
-  async function crearChofer({ nombre, correo, contrasena, telefono, rutaId }) {
-    const uid = await crearCuentaSinPerderSesion(correo, contrasena)
+  async function crearChofer({ nombre, correo, telefono, rutaId }) {
+    const uid = await crearCuentaSinPerderSesion(correo, contrasenaTemporalAlAzar())
     await set(ref(db, `usuarios/${uid}`), {
       nombre,
       correo,
@@ -186,6 +195,7 @@ function PanelChoferes({ puebloId, esSuperadmin }) {
       habilitado: true,
       creado: Date.now(),
     })
+    await enviarRestablecerContrasena(correo)
   }
 
   async function asignarChoferExistente({ uid, telefono, rutaId }) {
@@ -209,7 +219,6 @@ function PanelChoferes({ puebloId, esSuperadmin }) {
           rutas={rutas}
           onAsignar={asignarChoferExistente}
         />
-        <FormularioInvitarChofer puebloId={puebloId} rutas={rutas} />
       </div>
 
       {usuarios === null && <p className="empty-state">Cargando choferes…</p>}
@@ -227,16 +236,16 @@ function FormularioNuevoChofer({ rutas, onCrear }) {
   const [abierto, setAbierto] = useState(false)
   const [nombre, setNombre] = useState('')
   const [correo, setCorreo] = useState('')
-  const [contrasena, setContrasena] = useState('')
   const [telefono, setTelefono] = useState('')
   const [rutaId, setRutaId] = useState('')
   const [creando, setCreando] = useState(false)
+  const [enviado, setEnviado] = useState(false)
   const [error, setError] = useState('')
 
   async function confirmar() {
     setError('')
-    if (!nombre.trim() || !correo.trim() || contrasena.length < 6 || !telefono.trim()) {
-      setError('Completa nombre, correo, teléfono, y una contraseña de al menos 6 caracteres.')
+    if (!nombre.trim() || !correo.trim() || !telefono.trim()) {
+      setError('Completa nombre, correo y teléfono.')
       return
     }
     setCreando(true)
@@ -244,16 +253,10 @@ function FormularioNuevoChofer({ rutas, onCrear }) {
       await onCrear({
         nombre: nombre.trim(),
         correo: correo.trim(),
-        contrasena,
         telefono: telefono.trim(),
         rutaId,
       })
-      setNombre('')
-      setCorreo('')
-      setContrasena('')
-      setTelefono('')
-      setRutaId('')
-      setAbierto(false)
+      setEnviado(true)
     } catch (e) {
       setError(mensajeErrorCuenta(e.code))
     } finally {
@@ -261,17 +264,46 @@ function FormularioNuevoChofer({ rutas, onCrear }) {
     }
   }
 
+  function cerrar() {
+    setNombre('')
+    setCorreo('')
+    setTelefono('')
+    setRutaId('')
+    setEnviado(false)
+    setAbierto(false)
+  }
+
   if (!abierto) {
     return (
       <button className="btn-primary" style={{ flex: 1 }} onClick={() => setAbierto(true)}>
-        + Agregar chofer
+        + Invitar chofer
       </button>
+    )
+  }
+
+  if (enviado) {
+    return (
+      <div className="card" style={{ flex: '1 1 100%' }}>
+        <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>¡Listo! ✓</h2>
+        <p className="hint" style={{ marginTop: 0 }}>
+          Le mandamos un correo a <b>{correo}</b> para que elija su
+          contraseña y active su cuenta de chofer. Si no lo ve en un
+          par de minutos, pídele que revise la carpeta de spam.
+        </p>
+        <button className="btn-primary" onClick={cerrar}>
+          Listo
+        </button>
+      </div>
     )
   }
 
   return (
     <div className="card" style={{ flex: '1 1 100%' }}>
-      <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>Nuevo chofer</h2>
+      <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>Invitar chofer</h2>
+      <p className="hint" style={{ marginTop: 0 }}>
+        Le vamos a mandar un correo para que elija su propia contraseña
+        — no necesitas inventarle una.
+      </p>
       {error && <div className="error-banner">{error}</div>}
       <div className="field">
         <label>Nombre</label>
@@ -280,15 +312,6 @@ function FormularioNuevoChofer({ rutas, onCrear }) {
       <div className="field">
         <label>Correo electrónico</label>
         <input type="email" value={correo} onChange={(e) => setCorreo(e.target.value)} />
-      </div>
-      <div className="field">
-        <label>Contraseña inicial</label>
-        <input
-          type="text"
-          value={contrasena}
-          onChange={(e) => setContrasena(e.target.value)}
-          placeholder="Mínimo 6 caracteres — compártela con el chofer"
-        />
       </div>
       <div className="field">
         <label>Teléfono</label>
@@ -310,7 +333,7 @@ function FormularioNuevoChofer({ rutas, onCrear }) {
           Cancelar
         </button>
         <button className="btn-primary" style={{ flex: 1 }} onClick={confirmar} disabled={creando}>
-          {creando ? 'Creando…' : 'Crear chofer'}
+          {creando ? 'Enviando…' : 'Invitar'}
         </button>
       </div>
     </div>
@@ -330,128 +353,6 @@ function mensajeErrorCuenta(code) {
   }
 }
 
-// Genera un enlace de invitación: la persona invitada completa su
-// propio registro (elige su propio correo y contraseña) sin que el
-// admin tenga que crearle la cuenta ni saber su contraseña.
-function FormularioInvitarChofer({ puebloId, rutas }) {
-  const { user } = useAuth()
-  const [abierto, setAbierto] = useState(false)
-  const [rutaId, setRutaId] = useState('')
-  const [enlace, setEnlace] = useState('')
-  const [generando, setGenerando] = useState(false)
-  const [copiado, setCopiado] = useState(false)
-  const [error, setError] = useState('')
-
-  async function generar() {
-    setError('')
-    setGenerando(true)
-    try {
-      const nuevaRef = push(ref(db, 'invitaciones'))
-      await set(nuevaRef, {
-        rol: 'chofer',
-        puebloId,
-        rutaId: rutaId || null,
-        creadoPor: user.uid,
-        creado: Date.now(),
-        expira: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 días
-        usado: false,
-      })
-      setEnlace(`${URL_BASE_APP}registro?invitacion=${nuevaRef.key}`)
-    } catch {
-      setError('No se pudo generar la invitación. Intenta de nuevo.')
-    } finally {
-      setGenerando(false)
-    }
-  }
-
-  function copiar() {
-    navigator.clipboard.writeText(enlace)
-    setCopiado(true)
-    setTimeout(() => setCopiado(false), 2000)
-  }
-
-  function reiniciar() {
-    setEnlace('')
-    setRutaId('')
-    setAbierto(false)
-  }
-
-  if (!abierto) {
-    return (
-      <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setAbierto(true)}>
-        ✉️ Invitar chofer
-      </button>
-    )
-  }
-
-  return (
-    <div className="card" style={{ flex: '1 1 100%' }}>
-      <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>Invitar chofer</h2>
-
-      {!enlace ? (
-        <>
-          <p className="hint" style={{ marginTop: 0 }}>
-            Genera un enlace y compártelo (por WhatsApp, mensaje de
-            texto, etc.) con la persona. Ella misma elige su correo y
-            contraseña al completar su registro — no hace falta que tú
-            se los des.
-          </p>
-          {error && <div className="error-banner">{error}</div>}
-          <div className="field">
-            <label>Ruta (opcional — puede elegirla al registrarse si la dejas en blanco)</label>
-            <select value={rutaId} onChange={(e) => setRutaId(e.target.value)}>
-              <option value="">Sin asignar todavía</option>
-              {rutas.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.nombre}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setAbierto(false)}>
-              Cancelar
-            </button>
-            <button className="btn-primary" style={{ flex: 1 }} onClick={generar} disabled={generando}>
-              {generando ? 'Generando…' : 'Generar enlace'}
-            </button>
-          </div>
-        </>
-      ) : (
-        <>
-          <p className="hint" style={{ marginTop: 0 }}>
-            Válido por 7 días. Cómparte este enlace:
-          </p>
-          <div className="field">
-            <input readOnly value={enlace} onClick={(e) => e.target.select()} />
-          </div>
-          <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-            <button className="btn-secondary" style={{ flex: 1 }} onClick={copiar}>
-              {copiado ? 'Copiado ✓' : 'Copiar enlace'}
-            </button>
-            <a
-              className="btn-primary"
-              style={{ flex: 1, textAlign: 'center', textDecoration: 'none' }}
-              href={`https://wa.me/?text=${encodeURIComponent(
-                `Te invito a registrarte como chofer en la app de trolley: ${enlace}`
-              )}`}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Compartir por WhatsApp
-            </a>
-          </div>
-          <button className="link-btn" onClick={reiniciar}>
-            Listo, cerrar
-          </button>
-        </>
-      )}
-    </div>
-  )
-}
-
-// Convierte una cuenta que YA EXISTE (un pasajero, un chofer de otro
-// pueblo, etc.) en chofer de este pueblo, sin crear una cuenta nueva.
 function FormularioAsignarExistente({ usuariosDisponibles, rutas, onAsignar }) {
   const [abierto, setAbierto] = useState(false)
   const [uidElegido, setUidElegido] = useState('')
@@ -702,8 +603,8 @@ function PanelAdministradoresDePueblo({ puebloId, puebloNombre, esSuperadmin }) 
       .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '', 'es'))
   }, [usuarios, puebloId, esSuperadmin])
 
-  async function crearAdmin({ nombre, correo, contrasena }) {
-    const uid = await crearCuentaSinPerderSesion(correo, contrasena)
+  async function crearAdmin({ nombre, correo }) {
+    const uid = await crearCuentaSinPerderSesion(correo, contrasenaTemporalAlAzar())
     await set(ref(db, `usuarios/${uid}`), {
       nombre,
       correo,
@@ -712,6 +613,7 @@ function PanelAdministradoresDePueblo({ puebloId, puebloNombre, esSuperadmin }) 
       habilitado: true,
       creado: Date.now(),
     })
+    await enviarRestablecerContrasena(correo)
   }
 
   async function asignarAdminExistente(uid, pueblosAdminActuales) {
@@ -735,7 +637,6 @@ function PanelAdministradoresDePueblo({ puebloId, puebloNombre, esSuperadmin }) 
           usuariosDisponibles={usuariosDisponibles}
           onAsignar={asignarAdminExistente}
         />
-        <FormularioInvitarAdmin puebloId={puebloId} />
       </div>
 
       {usuarios === null && <p className="empty-state">Cargando administradores…</p>}
@@ -881,127 +782,24 @@ function FormularioAsignarAdminExistente({ usuariosDisponibles, onAsignar }) {
   )
 }
 
-// Igual que la invitación de chofer, pero para administradores: la
-// persona invitada completa su propio registro y queda con acceso de
-// admin únicamente a este pueblo.
-function FormularioInvitarAdmin({ puebloId }) {
-  const { user } = useAuth()
-  const [abierto, setAbierto] = useState(false)
-  const [enlace, setEnlace] = useState('')
-  const [generando, setGenerando] = useState(false)
-  const [copiado, setCopiado] = useState(false)
-  const [error, setError] = useState('')
-
-  async function generar() {
-    setError('')
-    setGenerando(true)
-    try {
-      const nuevaRef = push(ref(db, 'invitaciones'))
-      await set(nuevaRef, {
-        rol: 'admin',
-        puebloId,
-        creadoPor: user.uid,
-        creado: Date.now(),
-        expira: Date.now() + 7 * 24 * 60 * 60 * 1000,
-        usado: false,
-      })
-      setEnlace(`${URL_BASE_APP}registro?invitacion=${nuevaRef.key}`)
-    } catch {
-      setError('No se pudo generar la invitación. Intenta de nuevo.')
-    } finally {
-      setGenerando(false)
-    }
-  }
-
-  function copiar() {
-    navigator.clipboard.writeText(enlace)
-    setCopiado(true)
-    setTimeout(() => setCopiado(false), 2000)
-  }
-
-  if (!abierto) {
-    return (
-      <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setAbierto(true)}>
-        ✉️ Invitar admin
-      </button>
-    )
-  }
-
-  return (
-    <div className="card" style={{ flex: '1 1 100%' }}>
-      <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>Invitar administrador</h2>
-
-      {!enlace ? (
-        <>
-          <p className="hint" style={{ marginTop: 0 }}>
-            Genera un enlace y compártelo con la persona. Ella elige su
-            propio correo y contraseña al completar su registro, y
-            queda como admin únicamente de este pueblo.
-          </p>
-          {error && <div className="error-banner">{error}</div>}
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setAbierto(false)}>
-              Cancelar
-            </button>
-            <button className="btn-primary" style={{ flex: 1 }} onClick={generar} disabled={generando}>
-              {generando ? 'Generando…' : 'Generar enlace'}
-            </button>
-          </div>
-        </>
-      ) : (
-        <>
-          <p className="hint" style={{ marginTop: 0 }}>
-            Válido por 7 días. Comparte este enlace:
-          </p>
-          <div className="field">
-            <input readOnly value={enlace} onClick={(e) => e.target.select()} />
-          </div>
-          <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-            <button className="btn-secondary" style={{ flex: 1 }} onClick={copiar}>
-              {copiado ? 'Copiado ✓' : 'Copiar enlace'}
-            </button>
-            <a
-              className="btn-primary"
-              style={{ flex: 1, textAlign: 'center', textDecoration: 'none' }}
-              href={`https://wa.me/?text=${encodeURIComponent(
-                `Te invito a registrarte como administrador en la app de trolley: ${enlace}`
-              )}`}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Compartir por WhatsApp
-            </a>
-          </div>
-          <button className="link-btn" onClick={() => setAbierto(false)}>
-            Listo, cerrar
-          </button>
-        </>
-      )}
-    </div>
-  )
-}
-
 function FormularioNuevoAdmin({ onCrear }) {
   const [abierto, setAbierto] = useState(false)
   const [nombre, setNombre] = useState('')
   const [correo, setCorreo] = useState('')
-  const [contrasena, setContrasena] = useState('')
   const [creando, setCreando] = useState(false)
+  const [enviado, setEnviado] = useState(false)
   const [error, setError] = useState('')
 
   async function confirmar() {
     setError('')
-    if (!nombre.trim() || !correo.trim() || contrasena.length < 6) {
-      setError('Completa nombre, correo, y una contraseña de al menos 6 caracteres.')
+    if (!nombre.trim() || !correo.trim()) {
+      setError('Completa nombre y correo.')
       return
     }
     setCreando(true)
     try {
-      await onCrear({ nombre: nombre.trim(), correo: correo.trim(), contrasena })
-      setNombre('')
-      setCorreo('')
-      setContrasena('')
-      setAbierto(false)
+      await onCrear({ nombre: nombre.trim(), correo: correo.trim() })
+      setEnviado(true)
     } catch (e) {
       setError(mensajeErrorCuenta(e.code))
     } finally {
@@ -1009,19 +807,43 @@ function FormularioNuevoAdmin({ onCrear }) {
     }
   }
 
+  function cerrar() {
+    setNombre('')
+    setCorreo('')
+    setEnviado(false)
+    setAbierto(false)
+  }
+
   if (!abierto) {
     return (
       <button className="btn-primary" style={{ flex: 1 }} onClick={() => setAbierto(true)}>
-        + Agregar administrador
+        + Invitar administrador
       </button>
+    )
+  }
+
+  if (enviado) {
+    return (
+      <div className="card" style={{ flex: '1 1 100%' }}>
+        <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>¡Listo! ✓</h2>
+        <p className="hint" style={{ marginTop: 0 }}>
+          Le mandamos un correo a <b>{correo}</b> para que elija su
+          contraseña y active su cuenta de administrador.
+        </p>
+        <button className="btn-primary" onClick={cerrar}>
+          Listo
+        </button>
+      </div>
     )
   }
 
   return (
     <div className="card" style={{ flex: '1 1 100%' }}>
-      <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>Nuevo administrador</h2>
+      <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>Invitar administrador</h2>
       <p className="hint" style={{ marginTop: 0 }}>
-        Va a poder administrar choferes y rutas de este pueblo únicamente.
+        Va a poder administrar choferes y rutas de este pueblo
+        únicamente. Le mandamos un correo para que elija su propia
+        contraseña — no necesitas inventarle una.
       </p>
       {error && <div className="error-banner">{error}</div>}
       <div className="field">
@@ -1032,21 +854,12 @@ function FormularioNuevoAdmin({ onCrear }) {
         <label>Correo electrónico</label>
         <input type="email" value={correo} onChange={(e) => setCorreo(e.target.value)} />
       </div>
-      <div className="field">
-        <label>Contraseña inicial</label>
-        <input
-          type="text"
-          value={contrasena}
-          onChange={(e) => setContrasena(e.target.value)}
-          placeholder="Mínimo 6 caracteres — compártela con esa persona"
-        />
-      </div>
       <div style={{ display: 'flex', gap: 10 }}>
         <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setAbierto(false)}>
           Cancelar
         </button>
         <button className="btn-primary" style={{ flex: 1 }} onClick={confirmar} disabled={creando}>
-          {creando ? 'Creando…' : 'Crear administrador'}
+          {creando ? 'Enviando…' : 'Invitar'}
         </button>
       </div>
     </div>

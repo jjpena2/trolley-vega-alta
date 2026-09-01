@@ -1,7 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useSearchParams, Link } from 'react-router-dom'
-import { ref, get, update } from 'firebase/database'
-import { db } from '../firebase'
+import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { usePueblo } from '../context/PuebloContext'
 import { useRoutesForPueblo } from '../context/RoutesContext'
@@ -10,37 +8,6 @@ export default function Register() {
   const { register } = useAuth()
   const { pueblos, puebloActivo } = usePueblo()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
-  const invitacionId = searchParams.get('invitacion')
-
-  const [invitacion, setInvitacion] = useState(undefined) // undefined = cargando, null = no hay/inválida
-  const [errorInvitacion, setErrorInvitacion] = useState('')
-
-  useEffect(() => {
-    if (!invitacionId) {
-      setInvitacion(null)
-      return
-    }
-    get(ref(db, `invitaciones/${invitacionId}`)).then((snap) => {
-      if (!snap.exists()) {
-        setErrorInvitacion('Este enlace de invitación no existe o ya no es válido.')
-        setInvitacion(null)
-        return
-      }
-      const val = snap.val()
-      if (val.usado) {
-        setErrorInvitacion('Esta invitación ya fue usada. Pide una nueva.')
-        setInvitacion(null)
-        return
-      }
-      if (val.expira && Date.now() > val.expira) {
-        setErrorInvitacion('Esta invitación ya venció. Pide una nueva.')
-        setInvitacion(null)
-        return
-      }
-      setInvitacion({ id: invitacionId, ...val })
-    })
-  }, [invitacionId])
 
   const [rol, setRol] = useState('pasajero')
   const [nombre, setNombre] = useState('')
@@ -52,16 +19,6 @@ export default function Register() {
   const [error, setError] = useState('')
   const [cargando, setCargando] = useState(false)
 
-  // Si vienen de una invitación, el rol y el pueblo quedan fijos —
-  // no los puede cambiar la persona que se está registrando.
-  useEffect(() => {
-    if (invitacion) {
-      setRol(invitacion.rol || 'chofer')
-      setPuebloId(invitacion.puebloId || '')
-      if (invitacion.rutaId) setRutaId(invitacion.rutaId)
-    }
-  }, [invitacion])
-
   const pueblosParaElegir = pueblos.length ? pueblos : [puebloActivo].filter(Boolean)
   const { rutas } = useRoutesForPueblo(puebloId)
 
@@ -69,11 +26,9 @@ export default function Register() {
     if (!rutaId && rutas.length) setRutaId(rutas[0].id)
   }, [rutas, rutaId])
 
-  // Si cambia el pueblo elegido (solo posible sin invitación), la ruta
-  // anterior ya no aplica.
+  // Si cambia el pueblo elegido, la ruta anterior ya no aplica.
   useEffect(() => {
-    if (!invitacion) setRutaId('')
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setRutaId('')
   }, [puebloId])
 
   async function onSubmit(e) {
@@ -95,12 +50,7 @@ export default function Register() {
         telefono: telefono.trim(),
         ruta: rol === 'chofer' ? rutaId : '',
         puebloId: rol === 'chofer' ? puebloId : '',
-        pueblosAdmin:
-          rol === 'admin' && invitacion?.puebloId ? { [invitacion.puebloId]: true } : undefined,
       })
-      if (invitacion) {
-        await update(ref(db, `invitaciones/${invitacion.id}`), { usado: true })
-      }
       navigate('/')
     } catch (err) {
       setError(mensajeError(err.code))
@@ -109,75 +59,31 @@ export default function Register() {
     }
   }
 
-  if (invitacionId && invitacion === undefined) {
-    return (
-      <div className="screen">
-        <p className="empty-state">Revisando tu invitación…</p>
-      </div>
-    )
-  }
-
-  if (invitacionId && !invitacion) {
-    return (
-      <div className="screen">
-        <div className="card">
-          <div className="error-banner">{errorInvitacion}</div>
-          <Link className="btn-primary" to="/registro" style={{ display: 'block', textAlign: 'center' }}>
-            Registrarme sin invitación
-          </Link>
-        </div>
-      </div>
-    )
-  }
-
-  const puebloDeInvitacion = pueblosParaElegir.find((p) => p.id === invitacion?.puebloId)
-  const rutaDeInvitacion = rutas.find((r) => r.id === invitacion?.rutaId)
-
   return (
     <div className="screen">
       <div className="card">
         <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>
-          {invitacion ? 'Completa tu registro' : 'Crear cuenta'}
+          Crear cuenta
         </h2>
 
-        {invitacion ? (
-          <p className="hint">
-            Te invitaron a unirte como{' '}
-            <b>{invitacion.rol === 'admin' ? 'administrador' : 'chofer'}</b>
-            {puebloDeInvitacion && (
-              <>
-                {' '}
-                de <b>{puebloDeInvitacion.nombre}</b>
-              </>
-            )}
-            {rutaDeInvitacion && (
-              <>
-                {' '}
-                en la <b>{rutaDeInvitacion.nombre}</b>
-              </>
-            )}
-            . Solo completa tus datos para activar tu cuenta.
-          </p>
-        ) : (
-          <div className="role-toggle">
-            <button
-              type="button"
-              className={rol === 'pasajero' ? 'active' : ''}
-              onClick={() => setRol('pasajero')}
-            >
-              Soy pasajero
-            </button>
-            <button
-              type="button"
-              className={rol === 'chofer' ? 'active' : ''}
-              onClick={() => setRol('chofer')}
-            >
-              Soy chofer
-            </button>
-          </div>
-        )}
+        <div className="role-toggle">
+          <button
+            type="button"
+            className={rol === 'pasajero' ? 'active' : ''}
+            onClick={() => setRol('pasajero')}
+          >
+            Soy pasajero
+          </button>
+          <button
+            type="button"
+            className={rol === 'chofer' ? 'active' : ''}
+            onClick={() => setRol('chofer')}
+          >
+            Soy chofer
+          </button>
+        </div>
 
-        {!invitacion && rol === 'chofer' && (
+        {rol === 'chofer' && (
           <p className="hint">
             Como chofer podrás activar tu ubicación en vivo para que los
             pasajeros vean por dónde va tu trolley.
@@ -237,39 +143,35 @@ export default function Register() {
                 />
               </div>
 
-              {!invitacion && (
-                <div className="field">
-                  <label htmlFor="pueblo">Pueblo / municipio</label>
-                  <select
-                    id="pueblo"
-                    value={puebloId}
-                    onChange={(e) => setPuebloId(e.target.value)}
-                  >
-                    {pueblosParaElegir.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.nombre}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
+              <div className="field">
+                <label htmlFor="pueblo">Pueblo / municipio</label>
+                <select
+                  id="pueblo"
+                  value={puebloId}
+                  onChange={(e) => setPuebloId(e.target.value)}
+                >
+                  {pueblosParaElegir.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-              {!(invitacion && invitacion.rutaId) && (
-                <div className="field">
-                  <label htmlFor="ruta">Ruta asignada</label>
-                  <select
-                    id="ruta"
-                    value={rutaId}
-                    onChange={(e) => setRutaId(e.target.value)}
-                  >
-                    {rutas.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.nombre}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
+              <div className="field">
+                <label htmlFor="ruta">Ruta asignada</label>
+                <select
+                  id="ruta"
+                  value={rutaId}
+                  onChange={(e) => setRutaId(e.target.value)}
+                >
+                  {rutas.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </>
           )}
 
@@ -278,14 +180,12 @@ export default function Register() {
           </button>
         </form>
 
-        {!invitacion && (
-          <p style={{ textAlign: 'center', marginTop: 16 }}>
-            ¿Ya tienes cuenta?{' '}
-            <Link className="link-btn" to="/entrar">
-              Entra aquí
-            </Link>
-          </p>
-        )}
+        <p style={{ textAlign: 'center', marginTop: 16 }}>
+          ¿Ya tienes cuenta?{' '}
+          <Link className="link-btn" to="/entrar">
+            Entra aquí
+          </Link>
+        </p>
       </div>
     </div>
   )
