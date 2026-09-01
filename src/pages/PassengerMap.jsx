@@ -939,39 +939,42 @@ export default function PassengerMap() {
             </div>
           )}
 
-          <div className="stops-list">
-            {listaParadas.map((p) => (
-              <div
-                key={p.codigo}
-                className={
-                  'stop-row' +
-                  (p.codigo === proximaCodigo ? ' next' : '') +
-                  (p.codigo === paradaSeleccionada ? ' selected' : '')
-                }
-                onClick={() => elegirParada(p.codigo)}
-                role="button"
-                tabIndex={0}
-              >
-                <span className="stop-dot" style={{ background: rutaMostrada.color }} />
-                <span className="stop-name">
-                  {p.nombre}
-                  {p.conexiones?.length > 0 && (
-                    <span
-                      className="transfer-badge"
-                      title={`También pasa: ${p.conexiones.map((r) => r.nombre).join(', ')}`}
-                    >
-                      ⇄ {p.conexiones.length > 1 ? `${p.conexiones.length} rutas` : p.conexiones[0].nombre.replace('Ruta ', 'R')}
-                    </span>
-                  )}
-                </span>
-                <span className="stop-eta">
-                  {p.minutos == null ? 'N/A' : p.minutos <= 0 ? 'Aquí' : `${p.minutos} min`}
-                  {p.vuelta ? ' *' : ''}
-                </span>
-              </div>
-            ))}
+          <div className="stops-list-wrap">
+            <div className="stops-list">
+              {listaParadas.map((p) => (
+                <div
+                  key={p.codigo}
+                  className={
+                    'stop-row' +
+                    (p.codigo === proximaCodigo ? ' next' : '') +
+                    (p.codigo === paradaSeleccionada ? ' selected' : '')
+                  }
+                  onClick={() => elegirParada(p.codigo)}
+                  role="button"
+                  tabIndex={0}
+                >
+                  <span className="stop-dot" style={{ background: rutaMostrada.color }} />
+                  <span className="stop-name">
+                    {p.nombre}
+                    {p.conexiones?.length > 0 && (
+                      <span
+                        className="transfer-badge"
+                        title={`También pasa: ${p.conexiones.map((r) => r.nombre).join(', ')}`}
+                      >
+                        ⇄ {p.conexiones.length > 1 ? `${p.conexiones.length} rutas` : p.conexiones[0].nombre.replace('Ruta ', 'R')}
+                      </span>
+                    )}
+                  </span>
+                  <span className="stop-eta">
+                    {p.minutos == null ? 'N/A' : p.minutos <= 0 ? 'Aquí' : `${p.minutos} min`}
+                    {p.vuelta ? ' *' : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="stops-list-fade" aria-hidden="true" />
           </div>
-          <p className="hint" style={{ padding: '0 4px' }}>
+          <p className="hint hint-leyenda">
             Tiempos estimados según la posición GPS actual del chofer y la
             distancia real por carretera a cada parada (no es un horario
             fijo). * = próxima vuelta. ⇄ = punto de transbordo (ahí puedes
