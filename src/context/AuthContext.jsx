@@ -30,7 +30,7 @@ export function AuthProvider({ children }) {
     return unsub
   }, [])
 
-  async function register({ nombre, correo, contrasena, rol, telefono, ruta, puebloId }) {
+  async function register({ nombre, correo, contrasena, rol, telefono, ruta, puebloId, pueblosAdmin }) {
     const cred = await createUserWithEmailAndPassword(auth, correo, contrasena)
     await updateProfile(cred.user, { displayName: nombre })
 
@@ -41,6 +41,7 @@ export function AuthProvider({ children }) {
       telefono: telefono || '',
       ruta: ruta || '',
       puebloId: rol === 'chofer' ? puebloId || '' : '',
+      ...(rol === 'admin' && pueblosAdmin ? { pueblosAdmin } : {}),
       habilitado: true,
       creado: Date.now(),
     }
