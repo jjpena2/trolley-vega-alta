@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ref, onValue, update, set } from 'firebase/database'
+import { ref, onValue, update, set, push } from 'firebase/database'
 import { sendPasswordResetEmail } from 'firebase/auth'
 import { db, auth, crearCuentaSinPerderSesion } from '../firebase'
 import { useAuth } from '../context/AuthContext'
@@ -16,6 +16,9 @@ import { RUTAS_SEMILLA, claveParada } from '../data/routesVegaBaja'
 async function enviarRestablecerContrasena(correo) {
   await sendPasswordResetEmail(auth, correo)
 }
+
+// URL pública de la app, para armar los enlaces de invitación.
+const URL_BASE_APP = `${window.location.origin}${import.meta.env.BASE_URL}`
 
 export default function AdminDashboard() {
   const { profile } = useAuth()
@@ -206,6 +209,7 @@ function PanelChoferes({ puebloId, esSuperadmin }) {
           rutas={rutas}
           onAsignar={asignarChoferExistente}
         />
+        <FormularioInvitarChofer puebloId={puebloId} rutas={rutas} />
       </div>
 
       {usuarios === null && <p className="empty-state">Cargando choferes…</p>}
@@ -324,6 +328,126 @@ function mensajeErrorCuenta(code) {
     default:
       return 'No se pudo crear la cuenta. Intenta de nuevo.'
   }
+}
+
+// Genera un enlace de invitación: la persona invitada completa su
+// propio registro (elige su propio correo y contraseña) sin que el
+// admin tenga que crearle la cuenta ni saber su contraseña.
+function FormularioInvitarChofer({ puebloId, rutas }) {
+  const { user } = useAuth()
+  const [abierto, setAbierto] = useState(false)
+  const [rutaId, setRutaId] = useState('')
+  const [enlace, setEnlace] = useState('')
+  const [generando, setGenerando] = useState(false)
+  const [copiado, setCopiado] = useState(false)
+  const [error, setError] = useState('')
+
+  async function generar() {
+    setError('')
+    setGenerando(true)
+    try {
+      const nuevaRef = push(ref(db, 'invitaciones'))
+      await set(nuevaRef, {
+        rol: 'chofer',
+        puebloId,
+        rutaId: rutaId || null,
+        creadoPor: user.uid,
+        creado: Date.now(),
+        expira: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 días
+        usado: false,
+      })
+      setEnlace(`${URL_BASE_APP}registro?invitacion=${nuevaRef.key}`)
+    } catch {
+      setError('No se pudo generar la invitación. Intenta de nuevo.')
+    } finally {
+      setGenerando(false)
+    }
+  }
+
+  function copiar() {
+    navigator.clipboard.writeText(enlace)
+    setCopiado(true)
+    setTimeout(() => setCopiado(false), 2000)
+  }
+
+  function reiniciar() {
+    setEnlace('')
+    setRutaId('')
+    setAbierto(false)
+  }
+
+  if (!abierto) {
+    return (
+      <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setAbierto(true)}>
+        ✉️ Invitar chofer
+      </button>
+    )
+  }
+
+  return (
+    <div className="card" style={{ flex: '1 1 100%' }}>
+      <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>Invitar chofer</h2>
+
+      {!enlace ? (
+        <>
+          <p className="hint" style={{ marginTop: 0 }}>
+            Genera un enlace y compártelo (por WhatsApp, mensaje de
+            texto, etc.) con la persona. Ella misma elige su correo y
+            contraseña al completar su registro — no hace falta que tú
+            se los des.
+          </p>
+          {error && <div className="error-banner">{error}</div>}
+          <div className="field">
+            <label>Ruta (opcional — puede elegirla al registrarse si la dejas en blanco)</label>
+            <select value={rutaId} onChange={(e) => setRutaId(e.target.value)}>
+              <option value="">Sin asignar todavía</option>
+              {rutas.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setAbierto(false)}>
+              Cancelar
+            </button>
+            <button className="btn-primary" style={{ flex: 1 }} onClick={generar} disabled={generando}>
+              {generando ? 'Generando…' : 'Generar enlace'}
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="hint" style={{ marginTop: 0 }}>
+            Válido por 7 días. Cómparte este enlace:
+          </p>
+          <div className="field">
+            <input readOnly value={enlace} onClick={(e) => e.target.select()} />
+          </div>
+          <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+            <button className="btn-secondary" style={{ flex: 1 }} onClick={copiar}>
+              {copiado ? 'Copiado ✓' : 'Copiar enlace'}
+            </button>
+            <a
+              className="btn-primary"
+              style={{ flex: 1, textAlign: 'center', textDecoration: 'none' }}
+              href={`https://wa.me/?text=${encodeURIComponent(
+                `Te invito a registrarte como chofer en la app de trolley: ${enlace}`
+              )}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Compartir por WhatsApp
+            </a>
+          </div>
+          <button className="link-btn" onClick={reiniciar}>
+            Listo, cerrar
+          </button>
+        </>
+      )}
+    </div>
+  )
 }
 
 // Convierte una cuenta que YA EXISTE (un pasajero, un chofer de otro
@@ -611,6 +735,7 @@ function PanelAdministradoresDePueblo({ puebloId, puebloNombre, esSuperadmin }) 
           usuariosDisponibles={usuariosDisponibles}
           onAsignar={asignarAdminExistente}
         />
+        <FormularioInvitarAdmin puebloId={puebloId} />
       </div>
 
       {usuarios === null && <p className="empty-state">Cargando administradores…</p>}
@@ -752,6 +877,106 @@ function FormularioAsignarAdminExistente({ usuariosDisponibles, onAsignar }) {
           {asignando ? 'Asignando…' : 'Asignar como admin'}
         </button>
       </div>
+    </div>
+  )
+}
+
+// Igual que la invitación de chofer, pero para administradores: la
+// persona invitada completa su propio registro y queda con acceso de
+// admin únicamente a este pueblo.
+function FormularioInvitarAdmin({ puebloId }) {
+  const { user } = useAuth()
+  const [abierto, setAbierto] = useState(false)
+  const [enlace, setEnlace] = useState('')
+  const [generando, setGenerando] = useState(false)
+  const [copiado, setCopiado] = useState(false)
+  const [error, setError] = useState('')
+
+  async function generar() {
+    setError('')
+    setGenerando(true)
+    try {
+      const nuevaRef = push(ref(db, 'invitaciones'))
+      await set(nuevaRef, {
+        rol: 'admin',
+        puebloId,
+        creadoPor: user.uid,
+        creado: Date.now(),
+        expira: Date.now() + 7 * 24 * 60 * 60 * 1000,
+        usado: false,
+      })
+      setEnlace(`${URL_BASE_APP}registro?invitacion=${nuevaRef.key}`)
+    } catch {
+      setError('No se pudo generar la invitación. Intenta de nuevo.')
+    } finally {
+      setGenerando(false)
+    }
+  }
+
+  function copiar() {
+    navigator.clipboard.writeText(enlace)
+    setCopiado(true)
+    setTimeout(() => setCopiado(false), 2000)
+  }
+
+  if (!abierto) {
+    return (
+      <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setAbierto(true)}>
+        ✉️ Invitar admin
+      </button>
+    )
+  }
+
+  return (
+    <div className="card" style={{ flex: '1 1 100%' }}>
+      <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>Invitar administrador</h2>
+
+      {!enlace ? (
+        <>
+          <p className="hint" style={{ marginTop: 0 }}>
+            Genera un enlace y compártelo con la persona. Ella elige su
+            propio correo y contraseña al completar su registro, y
+            queda como admin únicamente de este pueblo.
+          </p>
+          {error && <div className="error-banner">{error}</div>}
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setAbierto(false)}>
+              Cancelar
+            </button>
+            <button className="btn-primary" style={{ flex: 1 }} onClick={generar} disabled={generando}>
+              {generando ? 'Generando…' : 'Generar enlace'}
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="hint" style={{ marginTop: 0 }}>
+            Válido por 7 días. Comparte este enlace:
+          </p>
+          <div className="field">
+            <input readOnly value={enlace} onClick={(e) => e.target.select()} />
+          </div>
+          <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+            <button className="btn-secondary" style={{ flex: 1 }} onClick={copiar}>
+              {copiado ? 'Copiado ✓' : 'Copiar enlace'}
+            </button>
+            <a
+              className="btn-primary"
+              style={{ flex: 1, textAlign: 'center', textDecoration: 'none' }}
+              href={`https://wa.me/?text=${encodeURIComponent(
+                `Te invito a registrarte como administrador en la app de trolley: ${enlace}`
+              )}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Compartir por WhatsApp
+            </a>
+          </div>
+          <button className="link-btn" onClick={() => setAbierto(false)}>
+            Listo, cerrar
+          </button>
+        </>
+      )}
     </div>
   )
 }
