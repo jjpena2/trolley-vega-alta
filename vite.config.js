@@ -2,10 +2,10 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
-// IMPORTANT: change "trolley-vega-alta" below to match your GitHub repo name
+// IMPORTANT: change "trolleypr" below to match your GitHub repo name
 // exactly (case-sensitive). This is required so assets load correctly when
 // the site is hosted at https://<usuario>.github.io/<repo>/
-const REPO_NAME = 'trolley-vega-alta'
+const REPO_NAME = 'trolleypr'
 
 export default defineConfig({
   base: `/${REPO_NAME}/`,
@@ -15,9 +15,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icons/icon-192.png', 'icons/icon-512.png'],
       manifest: {
-        name: 'Trolley Vega Alta',
-        short_name: 'Trolley VA',
-        description: 'Rastreo en vivo de los trolleys de Vega Alta, Puerto Rico',
+        name: 'TrolleyPR',
+        short_name: 'TrolleyPR',
+        description: 'Rastreo en vivo de trolleys municipales en Puerto Rico',
         theme_color: '#146C6E',
         background_color: '#FAF7F0',
         display: 'standalone',
