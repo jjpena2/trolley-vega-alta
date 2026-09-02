@@ -1592,12 +1592,34 @@ function mesesRecientes(cantidad) {
 function FilaFacturacionPueblo({ pueblo }) {
   const { actualizarTarifaPublicidad } = usePueblo()
   const { historial } = useHistorialAnuncios(pueblo.id)
+  const { banners, sincronizarHistorialFaltante } = useBannersForPueblo(pueblo.id)
+  const [sincronizando, setSincronizando] = useState(false)
 
   const opcionesMes = useMemo(() => mesesRecientes(6), [])
   const [mesElegido, setMesElegido] = useState(opcionesMes[0].clave)
   const mes = opcionesMes.find((m) => m.clave === mesElegido) || opcionesMes[0]
   const finEfectivo = Math.min(mes.fin, Date.now())
   const diasEnMes = (mes.fin - mes.inicio) / (24 * 60 * 60 * 1000)
+
+  // Anuncios que ya existían ANTES de que hubiera historial — no
+  // aparecen todavía en la facturación hasta que se sincronicen.
+  const idsConHistorial = useMemo(() => new Set(historial.map((e) => e.bannerId)), [historial])
+  const faltantesDeSincronizar = useMemo(() => {
+    return Object.values(banners)
+      .flatMap((porParada) =>
+        Object.entries(porParada || {}).map(([bannerId, b]) => ({ bannerId, ...b }))
+      )
+      .filter((b) => !idsConHistorial.has(b.bannerId))
+  }, [banners, idsConHistorial])
+
+  async function sincronizar() {
+    setSincronizando(true)
+    try {
+      await sincronizarHistorialFaltante(faltantesDeSincronizar)
+    } finally {
+      setSincronizando(false)
+    }
+  }
 
   const [tipoTarifa, setTipoTarifa] = useState(pueblo.tarifaPublicidad?.tipo || 'fijo_por_anuncio')
   const [valorTarifa, setValorTarifa] = useState(pueblo.tarifaPublicidad?.valor ?? '')
@@ -1677,6 +1699,22 @@ function FilaFacturacionPueblo({ pueblo }) {
   return (
     <div className="card">
       <b style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem' }}>{pueblo.nombre}</b>
+
+      {faltantesDeSincronizar.length > 0 && (
+        <div className="no-service-banner" style={{ marginTop: 12 }}>
+          Hay {faltantesDeSincronizar.length} anuncio(s) creados antes de
+          activar el historial de facturación — todavía no cuentan en
+          los números de abajo.
+          <button
+            className="link-btn"
+            style={{ display: 'block', marginTop: 6 }}
+            onClick={sincronizar}
+            disabled={sincronizando}
+          >
+            {sincronizando ? 'Sincronizando…' : 'Sincronizar ahora'}
+          </button>
+        </div>
+      )}
 
       <div className="field" style={{ marginTop: 12 }}>
         <label>Mes a facturar</label>
