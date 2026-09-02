@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
-import { onValue, ref, set, remove } from 'firebase/database'
+import { onValue, ref, set, remove, update } from 'firebase/database'
 import { db } from '../firebase'
 
 const PuebloContext = createContext(null)
@@ -71,6 +71,11 @@ export function PuebloProvider({ children }) {
     await remove(ref(db, `choferesActivos/${id}`))
   }
 
+  // tarifa = { tipo: 'fijo_por_anuncio' | 'porcentaje', valor: number }
+  async function actualizarTarifaPublicidad(puebloId, tarifa) {
+    await update(ref(db, `pueblos/${puebloId}`), { tarifaPublicidad: tarifa })
+  }
+
   const value = {
     pueblos, // lista real, para el panel de administración
     cargando: pueblosFirebase === null,
@@ -78,6 +83,7 @@ export function PuebloProvider({ children }) {
     setPuebloActivo,
     crearPueblo,
     eliminarPueblo,
+    actualizarTarifaPublicidad,
   }
 
   return <PuebloContext.Provider value={value}>{children}</PuebloContext.Provider>
