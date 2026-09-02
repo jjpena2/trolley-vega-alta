@@ -5,7 +5,7 @@ import { db, auth, crearCuentaSinPerderSesion } from '../firebase'
 import { useAuth } from '../context/AuthContext'
 import { usePueblo } from '../context/PuebloContext'
 import { useRoutesForPueblo, useRutasHuerfanas } from '../context/RoutesContext'
-import { useBannersForPueblo } from '../context/BannersContext'
+import { useBannersForPueblo, useHistorialAnuncios, calcularDiasActivosPorAnuncio } from '../context/BannersContext'
 import { RUTAS_SEMILLA, claveParada } from '../data/routesVegaBaja'
 
 // Firebase no deja que un admin le ponga directamente una contraseña
@@ -1397,7 +1397,7 @@ function PanelPublicidad({ puebloId }) {
                     style={{ color: '#a83226' }}
                     onClick={() => {
                       if (confirm(`¿Borrar el anuncio "${b.titulo}"?`)) {
-                        eliminarBanner(clave, bannerId)
+                        eliminarBanner(clave, bannerId, b)
                       }
                     }}
                   >
@@ -1576,9 +1576,28 @@ function PanelFacturacion() {
   )
 }
 
+function mesesRecientes(cantidad) {
+  const ahora = new Date()
+  const lista = []
+  for (let i = 0; i < cantidad; i++) {
+    const d = new Date(ahora.getFullYear(), ahora.getMonth() - i, 1)
+    const inicio = new Date(d.getFullYear(), d.getMonth(), 1).getTime()
+    const fin = new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime()
+    const etiqueta = d.toLocaleDateString('es-PR', { month: 'long', year: 'numeric' })
+    lista.push({ clave: `${d.getFullYear()}-${d.getMonth()}`, etiqueta, inicio, fin })
+  }
+  return lista
+}
+
 function FilaFacturacionPueblo({ pueblo }) {
   const { actualizarTarifaPublicidad } = usePueblo()
-  const { banners } = useBannersForPueblo(pueblo.id)
+  const { historial } = useHistorialAnuncios(pueblo.id)
+
+  const opcionesMes = useMemo(() => mesesRecientes(6), [])
+  const [mesElegido, setMesElegido] = useState(opcionesMes[0].clave)
+  const mes = opcionesMes.find((m) => m.clave === mesElegido) || opcionesMes[0]
+  const finEfectivo = Math.min(mes.fin, Date.now())
+  const diasEnMes = (mes.fin - mes.inicio) / (24 * 60 * 60 * 1000)
 
   const [tipoTarifa, setTipoTarifa] = useState(pueblo.tarifaPublicidad?.tipo || 'fijo_por_anuncio')
   const [valorTarifa, setValorTarifa] = useState(pueblo.tarifaPublicidad?.valor ?? '')
@@ -1596,19 +1615,25 @@ function FilaFacturacionPueblo({ pueblo }) {
     return unsub
   }, [pueblo.id])
 
-  const activos = useMemo(() => {
-    return Object.values(banners)
-      .flatMap((porParada) => Object.values(porParada || {}))
-      .filter((b) => b.activo !== false)
-  }, [banners])
-
-  const sumaPrecios = activos.reduce((acc, b) => acc + (Number(b.precio) || 0), 0)
-  const conPrecioReportado = activos.filter((b) => b.precio != null).length
+  // Calculado a partir del HISTORIAL permanente — cuenta los días que
+  // cada anuncio estuvo activo dentro del mes elegido, sin importar si
+  // ahora mismo está pausado o borrado. Así nadie puede pagar menos
+  // apagando sus anuncios justo antes de la fecha de cobro.
+  const anunciosDelMes = useMemo(
+    () => calcularDiasActivosPorAnuncio(historial, mes.inicio, finEfectivo),
+    [historial, mes.inicio, finEfectivo]
+  )
+  const conActividad = anunciosDelMes.filter((a) => a.diasActivo > 0)
+  const equivalenteAnuncios = conActividad.reduce((acc, a) => acc + a.diasActivo / diasEnMes, 0)
+  const ingresoReportadoProrrateado = conActividad.reduce(
+    (acc, a) => acc + (Number(a.precio) || 0) * (a.diasActivo / diasEnMes),
+    0
+  )
 
   const feeCalculado =
     tipoTarifa === 'porcentaje'
-      ? (sumaPrecios * (Number(valorTarifa) || 0)) / 100
-      : activos.length * (Number(valorTarifa) || 0)
+      ? (ingresoReportadoProrrateado * (Number(valorTarifa) || 0)) / 100
+      : equivalenteAnuncios * (Number(valorTarifa) || 0)
 
   async function guardarTarifa() {
     setGuardandoTarifa(true)
@@ -1632,6 +1657,7 @@ function FilaFacturacionPueblo({ pueblo }) {
       await set(nuevaRef, {
         monto: Number(montoNuevo),
         notas: notaNueva.trim(),
+        mes: mes.etiqueta,
         fecha: Date.now(),
       })
       setMontoNuevo('')
@@ -1652,21 +1678,32 @@ function FilaFacturacionPueblo({ pueblo }) {
     <div className="card">
       <b style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem' }}>{pueblo.nombre}</b>
 
-      <div className="stat-row" style={{ marginTop: 12 }}>
+      <div className="field" style={{ marginTop: 12 }}>
+        <label>Mes a facturar</label>
+        <select value={mesElegido} onChange={(e) => setMesElegido(e.target.value)}>
+          {opcionesMes.map((m) => (
+            <option key={m.clave} value={m.clave}>
+              {m.etiqueta}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="stat-row">
         <div className="stat">
-          <div className="value">{activos.length}</div>
-          <div className="label">Anuncios activos</div>
+          <div className="value">{equivalenteAnuncios.toFixed(1)}</div>
+          <div className="label">Anuncios-mes equivalentes</div>
         </div>
         <div className="stat">
-          <div className="value">${sumaPrecios.toFixed(0)}</div>
-          <div className="label">Ingreso reportado</div>
+          <div className="value">${ingresoReportadoProrrateado.toFixed(0)}</div>
+          <div className="label">Ingreso reportado (prorrateado)</div>
         </div>
       </div>
-      {activos.length > 0 && conPrecioReportado < activos.length && (
-        <p className="hint" style={{ marginTop: 0 }}>
-          ({conPrecioReportado} de {activos.length} anuncios tienen precio reportado)
-        </p>
-      )}
+      <p className="hint" style={{ marginTop: 0 }}>
+        Calculado con base en cuántos días cada anuncio estuvo
+        realmente activo durante {mes.etiqueta} — no importa si ahora
+        mismo está pausado o borrado, cuenta igual.
+      </p>
 
       <div className="field">
         <label>Modelo de tarifa para este pueblo</label>
@@ -1692,7 +1729,7 @@ function FilaFacturacionPueblo({ pueblo }) {
 
       <div className="stat" style={{ marginTop: 16, marginBottom: 16 }}>
         <div className="value">${feeCalculado.toFixed(2)}</div>
-        <div className="label">Fee estimado este mes</div>
+        <div className="label">Fee de {mes.etiqueta}</div>
       </div>
 
       <div style={{ borderTop: '1px solid var(--line)', paddingTop: 14 }}>
@@ -1720,7 +1757,7 @@ function FilaFacturacionPueblo({ pueblo }) {
           </button>
         </div>
         <input
-          placeholder="Nota (opcional, ej. 'Septiembre 2026')"
+          placeholder="Nota (opcional)"
           value={notaNueva}
           onChange={(e) => setNotaNueva(e.target.value)}
           style={{
@@ -1747,7 +1784,7 @@ function FilaFacturacionPueblo({ pueblo }) {
                 }}
               >
                 <span>
-                  {new Date(p.fecha).toLocaleDateString('es-PR')}
+                  {p.mes || new Date(p.fecha).toLocaleDateString('es-PR')}
                   {p.notas ? ` — ${p.notas}` : ''}
                 </span>
                 <b>${Number(p.monto).toFixed(2)}</b>
@@ -1759,6 +1796,7 @@ function FilaFacturacionPueblo({ pueblo }) {
     </div>
   )
 }
+
 
 // ==================== PUEBLOS (solo superadmin) ====================
 
