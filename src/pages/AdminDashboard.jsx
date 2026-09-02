@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ref, onValue, update, set } from 'firebase/database'
+import { ref, onValue, update, set, push } from 'firebase/database'
 import { sendPasswordResetEmail } from 'firebase/auth'
 import { db, auth, crearCuentaSinPerderSesion } from '../firebase'
 import { useAuth } from '../context/AuthContext'
@@ -101,6 +101,9 @@ export default function AdminDashboard() {
             <button type="button" className={tab === 'usuarios' ? 'active' : ''} onClick={() => setTab('usuarios')}>
               Usuarios
             </button>
+            <button type="button" className={tab === 'facturacion' ? 'active' : ''} onClick={() => setTab('facturacion')}>
+              Facturación
+            </button>
           </>
         )}
       </div>
@@ -124,6 +127,7 @@ export default function AdminDashboard() {
         />
       )}
       {tab === 'usuarios' && esSuperadmin && <PanelUsuarios />}
+      {tab === 'facturacion' && esSuperadmin && <PanelFacturacion />}
     </div>
   )
 }
@@ -1437,6 +1441,7 @@ function FormularioBanner({ clave, bannerId, nombreParada, rutaNombre, existente
   const [enlace, setEnlace] = useState(existente?.enlace || '')
   const [lat, setLat] = useState(existente?.lat ?? '')
   const [lng, setLng] = useState(existente?.lng ?? '')
+  const [precio, setPrecio] = useState(existente?.precio ?? '')
   const [activo, setActivo] = useState(existente?.activo !== false)
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
@@ -1455,6 +1460,7 @@ function FormularioBanner({ clave, bannerId, nombreParada, rutaNombre, existente
         imagenUrl: imagenUrl.trim(),
         enlace: enlace.trim(),
         ...(lat !== '' && lng !== '' ? { lat: Number(lat), lng: Number(lng) } : {}),
+        ...(precio !== '' ? { precio: Number(precio) } : {}),
         activo,
         nombreParada,
         rutaNombre,
@@ -1491,6 +1497,21 @@ function FormularioBanner({ clave, bannerId, nombreParada, rutaNombre, existente
         <label>Enlace externo al tocar el anuncio (opcional)</label>
         <input value={enlace} onChange={(e) => setEnlace(e.target.value)} placeholder="https://…" />
       </div>
+      <div className="field">
+        <label>Cuánto le cobras al negocio por este anuncio (opcional, mensual $)</label>
+        <input
+          type="number"
+          step="any"
+          min="0"
+          value={precio}
+          onChange={(e) => setPrecio(e.target.value)}
+          placeholder="Ej. 50"
+        />
+        <p className="hint" style={{ margin: '4px 0 0' }}>
+          No lo ve el pasajero — solo se usa para calcular la tarifa que
+          le corresponde a la plataforma en el panel de Facturación.
+        </p>
+      </div>
 
       <p className="hint" style={{ marginTop: 0 }}>
         Opcional: coordenadas del negocio (clic derecho en Google Maps →
@@ -1524,6 +1545,216 @@ function FormularioBanner({ clave, bannerId, nombreParada, rutaNombre, existente
         <button className="btn-primary" style={{ flex: 1 }} onClick={guardar} disabled={guardando}>
           {guardando ? 'Guardando…' : existente ? 'Guardar cambios' : 'Crear anuncio'}
         </button>
+      </div>
+    </div>
+  )
+}
+
+// ==================== FACTURACIÓN DE PUBLICIDAD (solo superadmin) ====================
+
+function PanelFacturacion() {
+  const { pueblos } = usePueblo()
+
+  return (
+    <div>
+      <div className="card">
+        <h2 style={{ fontFamily: 'var(--font-display)', marginTop: 0 }}>
+          Facturación de publicidad
+        </h2>
+        <p className="hint" style={{ marginTop: 0 }}>
+          Configura cómo le cobras a cada pueblo por su módulo de
+          publicidad, y lleva registro de los pagos que te hagan.
+        </p>
+      </div>
+
+      {!pueblos.length && <p className="empty-state">Todavía no has creado ningún pueblo.</p>}
+
+      {pueblos.map((p) => (
+        <FilaFacturacionPueblo key={p.id} pueblo={p} />
+      ))}
+    </div>
+  )
+}
+
+function FilaFacturacionPueblo({ pueblo }) {
+  const { actualizarTarifaPublicidad } = usePueblo()
+  const { banners } = useBannersForPueblo(pueblo.id)
+
+  const [tipoTarifa, setTipoTarifa] = useState(pueblo.tarifaPublicidad?.tipo || 'fijo_por_anuncio')
+  const [valorTarifa, setValorTarifa] = useState(pueblo.tarifaPublicidad?.valor ?? '')
+  const [guardandoTarifa, setGuardandoTarifa] = useState(false)
+  const [tarifaGuardada, setTarifaGuardada] = useState(false)
+
+  const [pagos, setPagos] = useState(null)
+  const [montoNuevo, setMontoNuevo] = useState('')
+  const [notaNueva, setNotaNueva] = useState('')
+  const [registrando, setRegistrando] = useState(false)
+
+  useEffect(() => {
+    const pagosRef = ref(db, `pagosPublicidad/${pueblo.id}`)
+    const unsub = onValue(pagosRef, (snap) => setPagos(snap.exists() ? snap.val() : {}))
+    return unsub
+  }, [pueblo.id])
+
+  const activos = useMemo(() => {
+    return Object.values(banners)
+      .flatMap((porParada) => Object.values(porParada || {}))
+      .filter((b) => b.activo !== false)
+  }, [banners])
+
+  const sumaPrecios = activos.reduce((acc, b) => acc + (Number(b.precio) || 0), 0)
+  const conPrecioReportado = activos.filter((b) => b.precio != null).length
+
+  const feeCalculado =
+    tipoTarifa === 'porcentaje'
+      ? (sumaPrecios * (Number(valorTarifa) || 0)) / 100
+      : activos.length * (Number(valorTarifa) || 0)
+
+  async function guardarTarifa() {
+    setGuardandoTarifa(true)
+    setTarifaGuardada(false)
+    try {
+      await actualizarTarifaPublicidad(pueblo.id, {
+        tipo: tipoTarifa,
+        valor: Number(valorTarifa) || 0,
+      })
+      setTarifaGuardada(true)
+    } finally {
+      setGuardandoTarifa(false)
+    }
+  }
+
+  async function registrarPago() {
+    if (!montoNuevo || Number(montoNuevo) <= 0) return
+    setRegistrando(true)
+    try {
+      const nuevaRef = push(ref(db, `pagosPublicidad/${pueblo.id}`))
+      await set(nuevaRef, {
+        monto: Number(montoNuevo),
+        notas: notaNueva.trim(),
+        fecha: Date.now(),
+      })
+      setMontoNuevo('')
+      setNotaNueva('')
+    } finally {
+      setRegistrando(false)
+    }
+  }
+
+  const listaPagos = useMemo(() => {
+    if (!pagos) return []
+    return Object.entries(pagos)
+      .map(([id, p]) => ({ id, ...p }))
+      .sort((a, b) => (b.fecha || 0) - (a.fecha || 0))
+  }, [pagos])
+
+  return (
+    <div className="card">
+      <b style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem' }}>{pueblo.nombre}</b>
+
+      <div className="stat-row" style={{ marginTop: 12 }}>
+        <div className="stat">
+          <div className="value">{activos.length}</div>
+          <div className="label">Anuncios activos</div>
+        </div>
+        <div className="stat">
+          <div className="value">${sumaPrecios.toFixed(0)}</div>
+          <div className="label">Ingreso reportado</div>
+        </div>
+      </div>
+      {activos.length > 0 && conPrecioReportado < activos.length && (
+        <p className="hint" style={{ marginTop: 0 }}>
+          ({conPrecioReportado} de {activos.length} anuncios tienen precio reportado)
+        </p>
+      )}
+
+      <div className="field">
+        <label>Modelo de tarifa para este pueblo</label>
+        <select value={tipoTarifa} onChange={(e) => setTipoTarifa(e.target.value)}>
+          <option value="fijo_por_anuncio">Fijo por anuncio activo</option>
+          <option value="porcentaje">Porcentaje del ingreso reportado</option>
+        </select>
+      </div>
+      <div className="field">
+        <label>{tipoTarifa === 'porcentaje' ? 'Porcentaje (%)' : 'Monto por anuncio ($/mes)'}</label>
+        <input
+          type="number"
+          step="any"
+          min="0"
+          value={valorTarifa}
+          onChange={(e) => setValorTarifa(e.target.value)}
+          placeholder={tipoTarifa === 'porcentaje' ? 'Ej. 20' : 'Ej. 5'}
+        />
+      </div>
+      <button className="btn-secondary" onClick={guardarTarifa} disabled={guardandoTarifa}>
+        {guardandoTarifa ? 'Guardando…' : tarifaGuardada ? 'Guardado ✓' : 'Guardar tarifa'}
+      </button>
+
+      <div className="stat" style={{ marginTop: 16, marginBottom: 16 }}>
+        <div className="value">${feeCalculado.toFixed(2)}</div>
+        <div className="label">Fee estimado este mes</div>
+      </div>
+
+      <div style={{ borderTop: '1px solid var(--line)', paddingTop: 14 }}>
+        <p className="hint" style={{ marginTop: 0, fontWeight: 700, textTransform: 'uppercase' }}>
+          Registrar un pago recibido
+        </p>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <input
+            type="number"
+            step="any"
+            min="0"
+            placeholder="Monto ($)"
+            value={montoNuevo}
+            onChange={(e) => setMontoNuevo(e.target.value)}
+            style={{
+              flex: 1,
+              border: '1.5px solid var(--line)',
+              borderRadius: 'var(--radius-sm)',
+              padding: '10px 12px',
+              background: 'var(--cream-100)',
+            }}
+          />
+          <button className="btn-primary" onClick={registrarPago} disabled={registrando} style={{ flex: 1 }}>
+            {registrando ? 'Guardando…' : 'Registrar'}
+          </button>
+        </div>
+        <input
+          placeholder="Nota (opcional, ej. 'Septiembre 2026')"
+          value={notaNueva}
+          onChange={(e) => setNotaNueva(e.target.value)}
+          style={{
+            width: '100%',
+            border: '1.5px solid var(--line)',
+            borderRadius: 'var(--radius-sm)',
+            padding: '10px 12px',
+            background: 'var(--cream-100)',
+            marginBottom: 12,
+          }}
+        />
+
+        {listaPagos.length > 0 && (
+          <div>
+            <p className="hint" style={{ margin: '0 0 6px' }}>Historial de pagos:</p>
+            {listaPagos.slice(0, 6).map((p) => (
+              <div
+                key={p.id}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: '0.85rem',
+                  padding: '4px 0',
+                }}
+              >
+                <span>
+                  {new Date(p.fecha).toLocaleDateString('es-PR')}
+                  {p.notas ? ` — ${p.notas}` : ''}
+                </span>
+                <b>${Number(p.monto).toFixed(2)}</b>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
