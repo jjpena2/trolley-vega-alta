@@ -61,6 +61,24 @@ export function useBannersForPueblo(puebloId) {
     await remove(ref(db, `banners/${puebloId}/${clave}/${bannerId}`))
   }
 
+  // Para anuncios que ya existían ANTES de que se agregara el
+  // historial: crea un primer registro para ellos usando la fecha en
+  // que se crearon/actualizaron por última vez (campo 'actualizado'),
+  // para que empiecen a contar en la facturación en vez de quedar en
+  // cero. Solo hace falta correrlo una vez por pueblo.
+  async function sincronizarHistorialFaltante(bannersConIdFaltantes) {
+    for (const b of bannersConIdFaltantes) {
+      const eventoRef = push(ref(db, `historialAnuncios/${puebloId}`))
+      await set(eventoRef, {
+        bannerId: b.bannerId,
+        titulo: b.titulo,
+        precio: b.precio ?? null,
+        activo: b.activo !== false,
+        fecha: b.actualizado || b.creado || Date.now(),
+      })
+    }
+  }
+
   return {
     // { claveParada: { bannerId: {titulo, descripcion, imagenUrl,
     //   enlace, lat, lng, activo, nombreParada, rutaNombre} } }
@@ -68,6 +86,7 @@ export function useBannersForPueblo(puebloId) {
     cargando: banners === null,
     guardarBanner,
     eliminarBanner,
+    sincronizarHistorialFaltante,
   }
 }
 
